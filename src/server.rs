@@ -36,7 +36,7 @@ impl ImageMcpServer {
     }
 
     #[tool(
-        description = "Edit an image using a natural-language prompt. Requires a base64-encoded input `image`; there is no mask/inpainting support — describe the desired edit in `prompt`."
+        description = "Edit one or more images using a natural-language prompt. Requires at least one base64-encoded input `image`; when multiple are given, the model can compose/reference all of them (e.g. combining a subject from one image with a background from another). There is no mask/inpainting support — describe the desired edit in `prompt`."
     )]
     async fn edit(
         &self,

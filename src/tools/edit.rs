@@ -7,28 +7,31 @@ use crate::litellm::LiteLlmClient;
 use super::ImageParams;
 
 /// Runs the `edit` (prompt-driven image editing) tool: resolves params
-/// against `edit_defaults`, decodes the required input `image`, calls
+/// against `edit_defaults`, decodes the required input `image`(s), calls
 /// LiteLLM's `/v1/images/edits`, and returns either an inline image block or
 /// a saved file path per `save`.
 pub async fn run(config: &Config, client: &LiteLlmClient, params: ImageParams) -> CallToolResult {
-    let Some(image_b64) = params.image.clone() else {
+    let Some(image_b64s) = params.image.clone().filter(|images| !images.is_empty()) else {
         return CallToolResult::error(vec![ContentBlock::text(
-            "edit requires an `image` parameter (base64-encoded input image)",
+            "edit requires an `image` parameter (at least one base64-encoded input image)",
         )]);
     };
 
-    let image_bytes = match base64::engine::general_purpose::STANDARD.decode(&image_b64) {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            return CallToolResult::error(vec![ContentBlock::text(format!(
-                "invalid base64 in `image` parameter: {err}"
-            ))]);
+    let mut image_bytes_list = Vec::with_capacity(image_b64s.len());
+    for image_b64 in &image_b64s {
+        match base64::engine::general_purpose::STANDARD.decode(image_b64) {
+            Ok(bytes) => image_bytes_list.push(bytes),
+            Err(err) => {
+                return CallToolResult::error(vec![ContentBlock::text(format!(
+                    "invalid base64 in `image` parameter: {err}"
+                ))]);
+            }
         }
-    };
+    }
 
     let resolved = params.resolve(&config.edit_defaults);
 
-    let images = match client.edit(&resolved, image_bytes).await {
+    let images = match client.edit(&resolved, image_bytes_list).await {
         Ok(images) => images,
         Err(err) => {
             return CallToolResult::error(vec![ContentBlock::text(format!("edit failed: {err}"))]);
@@ -104,7 +107,7 @@ mod tests {
             n: None,
             size: None,
             format: None,
-            image: Some("not-valid-base64!!!".to_string()),
+            image: Some(vec!["not-valid-base64!!!".to_string()]),
             save: None,
         };
 
@@ -133,7 +136,7 @@ mod tests {
             n: None,
             size: None,
             format: None,
-            image: Some("".to_string()),
+            image: Some(vec!["".to_string()]),
             save: None,
         };
 
@@ -143,6 +146,58 @@ mod tests {
         // isError=true regardless of the specific error message.
         let result = run(&config, &client, params).await;
         assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn empty_image_list_returns_error() {
+        let config = sample_config();
+        let client = LiteLlmClient::new(&config.lite_llm);
+
+        let params = ImageParams {
+            prompt: "edit this".to_string(),
+            model: None,
+            n: None,
+            size: None,
+            format: None,
+            image: Some(vec![]),
+            save: None,
+        };
+
+        let result = run(&config, &client, params).await;
+        assert_eq!(result.is_error, Some(true));
+
+        let content = &result.content[0];
+        let text = match content {
+            ContentBlock::Text(t) => t.text.clone(),
+            _ => panic!("expected text block"),
+        };
+        assert!(text.contains("edit requires an `image` parameter"));
+    }
+
+    #[tokio::test]
+    async fn second_image_invalid_base64_returns_error() {
+        let config = sample_config();
+        let client = LiteLlmClient::new(&config.lite_llm);
+
+        let params = ImageParams {
+            prompt: "edit this".to_string(),
+            model: None,
+            n: None,
+            size: None,
+            format: None,
+            image: Some(vec!["".to_string(), "not-valid-base64!!!".to_string()]),
+            save: None,
+        };
+
+        let result = run(&config, &client, params).await;
+        assert_eq!(result.is_error, Some(true));
+
+        let content = &result.content[0];
+        let text = match content {
+            ContentBlock::Text(t) => t.text.clone(),
+            _ => panic!("expected text block"),
+        };
+        assert!(text.contains("invalid base64"));
     }
 
     #[test]

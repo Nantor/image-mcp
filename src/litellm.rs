@@ -76,7 +76,10 @@ impl LiteLlmClient {
     }
 
     /// `POST /v1/images/edits` — multipart/form-data body, used by the `edit`
-    /// tool. `image_bytes` is the decoded input image.
+    /// tool. `images` is one or more decoded input images, each sent as its
+    /// own `image[]` part (per OpenAI's edits API, which accepts an array
+    /// of input images) — this lets the model compose/reference multiple
+    /// images in a single edit.
     ///
     /// Unlike `generate()`, this does *not* send `response_format`: at
     /// least the `gpt-image-1.5` model rejects it on this endpoint with
@@ -86,23 +89,25 @@ impl LiteLlmClient {
     pub async fn edit(
         &self,
         params: &ResolvedParams,
-        image_bytes: Vec<u8>,
+        images: Vec<Vec<u8>>,
     ) -> Result<Vec<String>, LiteLlmError> {
         let url = format!("{}/v1/images/edits", self.base_url);
 
-        let (extension, mime_type) = sniff_image_type(&image_bytes);
-        let image_part = reqwest::multipart::Part::bytes(image_bytes)
-            .file_name(format!("image.{extension}"))
-            .mime_str(mime_type)
-            .expect("sniffed mime type is valid");
-
-        let form = reqwest::multipart::Form::new()
+        let mut form = reqwest::multipart::Form::new()
             .text("prompt", params.prompt.clone())
             .text("model", params.model.clone())
             .text("n", params.n.to_string())
             .text("size", params.size.clone())
-            .text("output_format", params.format.as_str())
-            .part("image[]", image_part);
+            .text("output_format", params.format.as_str());
+
+        for (idx, image_bytes) in images.into_iter().enumerate() {
+            let (extension, mime_type) = sniff_image_type(&image_bytes);
+            let image_part = reqwest::multipart::Part::bytes(image_bytes)
+                .file_name(format!("image-{idx}.{extension}"))
+                .mime_str(mime_type)
+                .expect("sniffed mime type is valid");
+            form = form.part("image[]", image_part);
+        }
 
         let response = self
             .http

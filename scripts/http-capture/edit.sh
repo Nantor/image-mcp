@@ -1,13 +1,22 @@
 #!/usr/bin/env bash
 # Raw-request capture script for the `edit` tool's LiteLLM call.
 #
-# Mirrors LiteLlmClient::edit() in src/litellm.rs exactly:
+# Mirrors LiteLlmClient::edit() in src/litellm.rs, with one deliberate
+# EXPERIMENTAL deviation: this script accepts a repeatable --image flag
+# and sends one `image[]` multipart part per image, per OpenAI's
+# /v1/images/edits spec which accepts an *array* of input images. The
+# current Rust implementation (litellm.rs::edit / ImageParams) only
+# supports a single `image: Option<String>` — this script exists to
+# test whether the live LiteLLM/model combo honors multi-image edits
+# before committing to that change in the production code.
+#
 #   POST {base_url}/v1/images/edits
 #   Content-Type: multipart/form-data
 #   Authorization: Bearer <api_key>
 #   fields: prompt, model, n, size, output_format
-#   file part: image[] = <input image>, filename "image.<ext>", sniffed
-#              mime type (same sniff_image_type() logic as litellm.rs)
+#   file part(s): image[] = <input image>, filename "image.<ext>",
+#                 sniffed mime type (same sniff_image_type() logic as
+#                 litellm.rs), repeated once per --image flag
 #
 # Note: unlike create.sh, this does NOT send response_format. At least
 # gpt-image-1.5 rejects it on /v1/images/edits with a 400 "Unknown
@@ -26,6 +35,10 @@
 #   ./edit.sh --prompt "add a hat" --image /path/to/input.png \
 #             [--model gpt-image-1] [--n 1] [--size 1024x1024] [--format png]
 #
+#   # experimental multi-image edit (repeat --image):
+#   ./edit.sh --prompt "combine these" \
+#             --image /path/to/a.png --image /path/to/b.png --image /path/to/c.png
+#
 # Config: reads ~/.config/image-mcp/config.json (override with
 # IMAGE_MCP_CONFIG=/path/to/config.json).
 
@@ -40,7 +53,7 @@ require_cmd jq
 require_cmd python3
 
 PROMPT=""
-IMAGE_PATH=""
+IMAGE_PATHS=()
 MODEL=""
 N=""
 SIZE=""
@@ -48,7 +61,10 @@ FORMAT=""
 
 usage() {
     cat <<EOF
-Usage: $0 --prompt "<text>" --image <path> [--model MODEL] [--n N] [--size WxH] [--format png|jpg|webp]
+Usage: $0 --prompt "<text>" --image <path> [--image <path> ...] [--model MODEL] [--n N] [--size WxH] [--format png|jpg|webp]
+
+--image may be repeated to send multiple image[] parts (experimental —
+see script header comment).
 EOF
     exit 1
 }
@@ -56,7 +72,7 @@ EOF
 while [ $# -gt 0 ]; do
     case "$1" in
         --prompt) PROMPT="$2"; shift 2 ;;
-        --image) IMAGE_PATH="$2"; shift 2 ;;
+        --image) IMAGE_PATHS+=("$2"); shift 2 ;;
         --model) MODEL="$2"; shift 2 ;;
         --n) N="$2"; shift 2 ;;
         --size) SIZE="$2"; shift 2 ;;
@@ -67,8 +83,10 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$PROMPT" ] || { echo "error: --prompt is required" >&2; usage; }
-[ -n "$IMAGE_PATH" ] || { echo "error: --image is required (edit has no mask param — this is the sole input image)" >&2; usage; }
-[ -f "$IMAGE_PATH" ] || die "image file not found: $IMAGE_PATH"
+[ "${#IMAGE_PATHS[@]}" -ge 1 ] || { echo "error: at least one --image is required (edit has no mask param — these are the sole input images)" >&2; usage; }
+for p in "${IMAGE_PATHS[@]}"; do
+    [ -f "$p" ] || die "image file not found: $p"
+done
 
 CONFIG_JSON="$(load_config_json)"
 
@@ -83,38 +101,43 @@ RESOLVED_FORMAT="${FORMAT:-$(cfg "$CONFIG_JSON" '.edit_defaults.format')}"
 
 URL="$BASE_URL/v1/images/edits"
 
-# Same magic-byte sniff as litellm.rs::sniff_image_type, used to name/type
-# the image[] part the same way the Rust client does.
-read -r SNIFF_EXT SNIFF_MIME <<<"$(sniff_image_type "$IMAGE_PATH")"
-
 DIR="$(new_capture_dir edit)"
 echo "capturing to: $DIR"
 
-cat >"$DIR/meta.json" <<EOF
-{
-  "endpoint": "$URL",
-  "method": "POST",
-  "resolved_params": {
-    "prompt": $(jq -n --arg p "$PROMPT" '$p'),
-    "model": "$RESOLVED_MODEL",
-    "n": $RESOLVED_N,
-    "size": "$RESOLVED_SIZE",
-    "format": "$RESOLVED_FORMAT"
-  },
-  "input_image": {
-    "source_path": "$IMAGE_PATH",
-    "sniffed_extension": "$SNIFF_EXT",
-    "sniffed_mime": "$SNIFF_MIME",
-    "sent_as_filename": "image.$SNIFF_EXT"
-  }
-}
-EOF
+# Same magic-byte sniff as litellm.rs::sniff_image_type, used to name/type
+# each image[] part the same way the Rust client does. Sniffed once per
+# input image since a multi-image edit may mix formats.
+CURL_IMAGE_ARGS=()
+INPUT_IMAGES_JSON="[]"
+for idx in "${!IMAGE_PATHS[@]}"; do
+    p="${IMAGE_PATHS[$idx]}"
+    read -r ext mime <<<"$(sniff_image_type "$p")"
+    cp "$p" "$DIR/input-image-$idx.$ext"
+    CURL_IMAGE_ARGS+=(-F "image[]=@${p};filename=image-$idx.$ext;type=$mime")
+    INPUT_IMAGES_JSON="$(echo "$INPUT_IMAGES_JSON" | jq \
+        --arg src "$p" --arg ext "$ext" --arg mime "$mime" --arg fn "image-$idx.$ext" \
+        '. + [{source_path: $src, sniffed_extension: $ext, sniffed_mime: $mime, sent_as_filename: $fn}]')"
+done
 
-cp "$IMAGE_PATH" "$DIR/input-image.$SNIFF_EXT"
+jq -n \
+    --arg endpoint "$URL" \
+    --arg prompt "$PROMPT" \
+    --arg model "$RESOLVED_MODEL" \
+    --argjson n "$RESOLVED_N" \
+    --arg size "$RESOLVED_SIZE" \
+    --arg format "$RESOLVED_FORMAT" \
+    --argjson input_images "$INPUT_IMAGES_JSON" \
+    '{
+        endpoint: $endpoint,
+        method: "POST",
+        resolved_params: {prompt: $prompt, model: $model, n: $n, size: $size, format: $format},
+        input_images: $input_images
+    }' >"$DIR/meta.json"
 
 # --trace-ascii captures the literal bytes sent/received on the wire
 # (headers + multipart body, both directions) for later low-level
-# analysis. Field order below matches Form::new() in litellm.rs.
+# analysis. Field order below matches Form::new() in litellm.rs, with
+# one image[] part appended per --image flag (experimental).
 HTTP_STATUS="$(curl -sS \
     --trace-ascii "$DIR/wire-trace.txt" \
     -o "$DIR/response-body.raw" \
@@ -127,7 +150,7 @@ HTTP_STATUS="$(curl -sS \
     -F "n=$RESOLVED_N" \
     -F "size=$RESOLVED_SIZE" \
     -F "output_format=$RESOLVED_FORMAT" \
-    -F "image[]=@${IMAGE_PATH};filename=image.$SNIFF_EXT;type=$SNIFF_MIME")"
+    "${CURL_IMAGE_ARGS[@]}")"
 
 echo "$HTTP_STATUS" >"$DIR/response-status.txt"
 echo "HTTP status: $HTTP_STATUS"

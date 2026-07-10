@@ -26,15 +26,20 @@ struct ImageParams {
     n: Option<u32>,          // falls back to config default per mode
     size: Option<String>,    // e.g. "1024x1024", falls back to config default
     format: Option<Format>,  // png | jpg | webp
-    image: Option<String>,   // base64 input image — required for `edit`, unused for `create`
+    image: Option<Vec<String>>, // base64 input image(s) — required for `edit` (>=1), unused for `create`
     save: Option<bool>,      // true = write to disk & return path, false = inline image content
 }
 ```
 
 - `create` → `POST {base_url}/v1/images/generations` (JSON body)
-- `edit` → `POST {base_url}/v1/images/edits` (multipart/form-data: `image[]` file part, `prompt`/`model` as text fields — per LiteLLM's OpenAPI spec)
-- Both requests explicitly set `response_format: b64_json` — verify at
-  runtime that the target model actually honors this.
+- `edit` → `POST {base_url}/v1/images/edits` (multipart/form-data: one `image[]` file part per input image, `prompt`/`model` as text fields — per LiteLLM's OpenAPI spec; verified against a live LiteLLM proxy that multiple `image[]` parts in one request let the model compose/reference all of them, e.g. combining a subject from one image with a background from another)
+- `create` explicitly sets `response_format: b64_json` and this is
+  honored by the models tested against.
+- `edit` does **not** send `response_format` — verified against a live
+  LiteLLM proxy that at least `gpt-image-1.5` rejects it on this endpoint
+  with a 400 (`Unknown parameter: 'response_format'`), while
+  `/v1/images/generations` accepts it fine. The edits endpoint returns
+  `b64_json` data by default regardless.
 - `list_models` takes no input, returns `image_models` straight from config
   (no LiteLLM call).
 
@@ -113,12 +118,15 @@ image-mcp/
 
 ## Open items to validate during implementation
 
-- Confirm whether target models actually honor `response_format: b64_json`
-  on both `/v1/images/generations` and `/v1/images/edits`.
-- Confirm exact multipart field names LiteLLM expects for `/v1/images/edits`
-  beyond `image[]` (e.g. does `prompt` need to be a plain form field or
-  JSON-encoded?) — validate with a live LiteLLM instance before finalizing
-  `litellm.rs`.
+- ~~Confirm whether target models actually honor `response_format:
+  b64_json` on both `/v1/images/generations` and `/v1/images/edits`.~~
+  Resolved: `create` honors it; `edit` rejects it on at least
+  `gpt-image-1.5` and no longer sends it (see above).
+- ~~Confirm exact multipart field names LiteLLM expects for
+  `/v1/images/edits`~~ Resolved against a live LiteLLM instance: plain
+  form fields for `prompt`/`model`/`n`/`size`/`output_format`, one
+  `image[]` file part per input image (multiple parts accepted and
+  composited by the model).
 - Verify practical message-size limits for the `image` content block over
   stdio with your actual MCP client, since large `n`/`size` combinations may
   need `save: true` to avoid oversized JSON-RPC messages.

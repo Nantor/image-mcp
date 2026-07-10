@@ -24,8 +24,11 @@ pub struct ImageParams {
     pub size: Option<String>,
     /// Output image format. Falls back to the configured default.
     pub format: Option<Format>,
-    /// Base64-encoded input image. Required for `edit`, unused for `create`.
-    pub image: Option<String>,
+    /// Base64-encoded input image(s). Required for `edit` (at least one),
+    /// unused for `create`. Multiple images are sent as separate `image[]`
+    /// parts to LiteLLM, letting the model compose/reference all of them
+    /// in a single edit (e.g. "put subject A onto subject B's background").
+    pub image: Option<Vec<String>>,
     /// If true, write the image to disk and return its path instead of an
     /// inline image content block. Falls back to the configured default.
     pub save: Option<bool>,
