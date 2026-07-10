@@ -96,7 +96,7 @@ Per-call params in a tool invocation override the matching config default.
 
 ## Project structure
 
-```
+```text
 image-mcp/
 ├── Cargo.toml
 ├── src/

@@ -43,7 +43,7 @@ impl LiteLlmClient {
     pub fn new(config: &LiteLlmConfig) -> Self {
         Self {
             http: reqwest::Client::new(),
-            base_url: config.base_url.trim_end_matches('/').to_string(),
+            base_url: normalize_base_url(&config.base_url),
             api_key: config.api_key.clone(),
         }
     }
@@ -77,6 +77,12 @@ impl LiteLlmClient {
 
     /// `POST /v1/images/edits` — multipart/form-data body, used by the `edit`
     /// tool. `image_bytes` is the decoded input image.
+    ///
+    /// Unlike `generate()`, this does *not* send `response_format`: at
+    /// least the `gpt-image-1.5` model rejects it on this endpoint with
+    /// `Unknown parameter: 'response_format'` (400), even though the same
+    /// field is accepted on `/v1/images/generations`. The endpoint returns
+    /// `b64_json` data by default regardless.
     pub async fn edit(
         &self,
         params: &ResolvedParams,
@@ -96,7 +102,6 @@ impl LiteLlmClient {
             .text("n", params.n.to_string())
             .text("size", params.size.clone())
             .text("output_format", params.format.as_str())
-            .text("response_format", "b64_json")
             .part("image[]", image_part);
 
         let response = self
@@ -135,6 +140,15 @@ impl LiteLlmClient {
     }
 }
 
+pub(crate) fn normalize_base_url(raw: &str) -> String {
+    let stripped = raw.trim_end_matches('/');
+    if stripped.ends_with("/v1") {
+        stripped.strip_suffix("/v1").unwrap_or(stripped).to_string()
+    } else {
+        stripped.to_string()
+    }
+}
+
 /// Sniffs an image's format from its magic bytes, defaulting to PNG if
 /// unrecognized. Used to set an accurate filename/mime type on the
 /// multipart `image[]` part for `/v1/images/edits`.
@@ -153,6 +167,51 @@ fn sniff_image_type(bytes: &[u8]) -> (&'static str, &'static str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strips_trailing_slash() {
+        assert_eq!(normalize_base_url("http://localhost:4000/"), "http://localhost:4000");
+    }
+
+    #[test]
+    fn keeps_url_without_trailing_slash() {
+        assert_eq!(normalize_base_url("http://localhost:4000"), "http://localhost:4000");
+    }
+
+    #[test]
+    fn strips_multiple_trailing_slashes() {
+        assert_eq!(normalize_base_url("http://localhost:4000///"), "http://localhost:4000");
+    }
+
+    #[test]
+    fn strips_trailing_v1() {
+        assert_eq!(normalize_base_url("http://localhost:4000/v1"), "http://localhost:4000");
+    }
+
+    #[test]
+    fn keeps_v1_in_path() {
+        assert_eq!(normalize_base_url("http://localhost:4000/some/v1/path"), "http://localhost:4000/some/v1/path");
+    }
+
+    #[test]
+    fn strips_trailing_slash_and_v1() {
+        assert_eq!(normalize_base_url("http://localhost:4000/v1/"), "http://localhost:4000");
+    }
+
+    #[test]
+    fn handles_https() {
+        assert_eq!(normalize_base_url("https://adesso-ai-hub.3asabc.de/v1"), "https://adesso-ai-hub.3asabc.de");
+    }
+
+    #[test]
+    fn clones_api_key() {
+        let config = LiteLlmConfig {
+            base_url: "http://localhost:4000".to_string(),
+            api_key: "super-secret-key".to_string(),
+        };
+        let client = LiteLlmClient::new(&config);
+        assert_eq!(client.api_key, "super-secret-key");
+    }
 
     #[test]
     fn sniffs_png() {

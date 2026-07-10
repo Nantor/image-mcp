@@ -78,3 +78,106 @@ pub fn respond_with_images(images: Vec<String>, format: Format, save: bool) -> C
 
     CallToolResult::success(content)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_defaults() -> ImageDefaults {
+        ImageDefaults {
+            model: "default-model".to_string(),
+            n: 1,
+            size: "1024x1024".to_string(),
+            format: Format::Png,
+            save: false,
+        }
+    }
+
+    #[test]
+    fn resolve_all_defaults() {
+        let params = ImageParams {
+            prompt: "hello".to_string(),
+            model: None,
+            n: None,
+            size: None,
+            format: None,
+            image: None,
+            save: None,
+        };
+        let defaults = sample_defaults();
+        let resolved = params.resolve(&defaults);
+
+        assert_eq!(resolved.model, "default-model");
+        assert_eq!(resolved.n, 1);
+        assert_eq!(resolved.size, "1024x1024");
+        assert_eq!(resolved.format, Format::Png);
+        assert_eq!(resolved.save, false);
+        assert_eq!(resolved.prompt, "hello");
+    }
+
+    #[test]
+    fn resolve_all_overrides() {
+        let params = ImageParams {
+            prompt: "hello".to_string(),
+            model: Some("custom-model".to_string()),
+            n: Some(4),
+            size: Some("2048x2048".to_string()),
+            format: Some(Format::Jpg),
+            image: None,
+            save: Some(true),
+        };
+        let defaults = sample_defaults();
+        let resolved = params.resolve(&defaults);
+
+        assert_eq!(resolved.model, "custom-model");
+        assert_eq!(resolved.n, 4);
+        assert_eq!(resolved.size, "2048x2048");
+        assert_eq!(resolved.format, Format::Jpg);
+        assert_eq!(resolved.save, true);
+        assert_eq!(resolved.prompt, "hello");
+    }
+
+    #[test]
+    fn resolve_partial_override() {
+        let params = ImageParams {
+            prompt: "hello".to_string(),
+            model: Some("overridden".to_string()),
+            n: None,
+            size: None,
+            format: Some(Format::Webp),
+            image: None,
+            save: None,
+        };
+        let defaults = ImageDefaults {
+            model: "default-model".to_string(),
+            n: 3,
+            size: "512x512".to_string(),
+            format: Format::Png,
+            save: true,
+        };
+        let resolved = params.resolve(&defaults);
+
+        assert_eq!(resolved.model, "overridden");
+        assert_eq!(resolved.n, 3);
+        assert_eq!(resolved.size, "512x512");
+        assert_eq!(resolved.format, Format::Webp);
+        assert_eq!(resolved.save, true);
+    }
+
+    #[test]
+    fn resolve_prompt_always_came_from_params() {
+        // prompt has no Option variant, it always comes from params
+        let params = ImageParams {
+            prompt: "my prompt".to_string(),
+            model: Some("m".into()),
+            n: None,
+            size: None,
+            format: None,
+            image: None,
+            save: None,
+        };
+        let defaults = sample_defaults();
+        let resolved = params.resolve(&defaults);
+        assert_eq!(resolved.prompt, "my prompt");
+    }
+}

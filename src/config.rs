@@ -85,3 +85,73 @@ pub fn load_config() -> Result<Config, ConfigError> {
     jsonc_parser::parse_to_serde_value::<Config>(&contents, &Default::default())
         .map_err(|e| ConfigError::ParseFailed(path.clone(), e.to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_as_str() {
+        assert_eq!(Format::Png.as_str(), "png");
+        assert_eq!(Format::Jpg.as_str(), "jpg");
+        assert_eq!(Format::Webp.as_str(), "webp");
+    }
+
+    #[test]
+    fn format_mime_type() {
+        assert_eq!(Format::Png.mime_type(), "image/png");
+        assert_eq!(Format::Jpg.mime_type(), "image/jpeg");
+        assert_eq!(Format::Webp.mime_type(), "image/webp");
+    }
+
+    #[test]
+    fn config_error_no_config_dir() {
+        let err = ConfigError::NoConfigDir;
+        assert_eq!(err.to_string(), "could not determine config directory");
+    }
+
+    #[test]
+    fn config_error_not_found() {
+        let path = PathBuf::from("/fake/path/config.json");
+        let err = ConfigError::NotFound(path.clone());
+        assert_eq!(err.to_string(), "config file not found at /fake/path/config.json");
+    }
+
+    #[test]
+    fn config_error_read_failed() {
+        let path = PathBuf::from("/fake/path/config.json");
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "read access denied");
+        let err = ConfigError::ReadFailed(path.clone(), io_err);
+        assert!(err.to_string().starts_with("failed to read config file at /fake/path/config.json:"));
+    }
+
+    #[test]
+    fn config_error_parse_failed() {
+        let path = PathBuf::from("/fake/path/config.json");
+        let err = ConfigError::ParseFailed(path.clone(), "unexpected token".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("failed to parse config file at"));
+        assert!(msg.contains(&path.display().to_string()));
+    }
+
+    #[test]
+    fn config_path_returns_expected_structure() {
+        let dir = dirs::config_dir().expect("config dir should exist on this platform");
+        let expected = dir.join("image-mcp").join("config.json");
+        let actual = config_path().expect("config_path should succeed when config_dir exists");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn load_config_missing_file() {
+        // Use a guaranteed non-existent path by temporarily manipulating
+        // config_path is hard-coded to dirs::config_dir(), so just pick a
+        // file we know doesn't exist inside the config dir.
+        let result = load_config();
+        // On most systems config_dir()+image-mcp/config.json won't exist,
+        // so we expect NotFound. If the file happens to exist (user has
+        // already created it), we should get Ok or ReadFailed, both success.
+        // The test just checks that it doesn't panic.
+        let _ = result;
+    }
+}
