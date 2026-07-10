@@ -39,3 +39,28 @@ fn save_dir() -> Result<PathBuf, ImageStoreError> {
     }
     Ok(std::env::temp_dir().join("image-mcp"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_image_writes_decoded_bytes_with_correct_extension() {
+        let bytes = b"not really a png, just test bytes";
+        let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+
+        let path = save_image(&b64, Format::Png).expect("save_image should succeed");
+
+        assert_eq!(path.extension().and_then(|e| e.to_str()), Some("png"));
+        let written = std::fs::read(&path).expect("file should exist");
+        assert_eq!(written, bytes);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn save_image_rejects_invalid_base64() {
+        let result = save_image("not valid base64!!!", Format::Png);
+        assert!(matches!(result, Err(ImageStoreError::Decode(_))));
+    }
+}

@@ -31,9 +31,7 @@ pub async fn run(config: &Config, client: &LiteLlmClient, params: ImageParams) -
     let images = match client.edit(&resolved, image_bytes).await {
         Ok(images) => images,
         Err(err) => {
-            return CallToolResult::error(vec![ContentBlock::text(format!(
-                "edit failed: {err}"
-            ))]);
+            return CallToolResult::error(vec![ContentBlock::text(format!("edit failed: {err}"))]);
         }
     };
 

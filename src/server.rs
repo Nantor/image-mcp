@@ -1,6 +1,8 @@
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo};
+use rmcp::model::{
+    CallToolResult, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
+};
 use rmcp::{ErrorData as McpError, ServerHandler, tool, tool_handler, tool_router};
 
 use crate::config::Config;

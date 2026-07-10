@@ -1,7 +1,9 @@
 use serde::Deserialize;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, Deserialize, serde::Serialize, schemars::JsonSchema, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, Deserialize, serde::Serialize, schemars::JsonSchema, PartialEq, Eq,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Format {
     Png,

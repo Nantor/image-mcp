@@ -56,6 +56,7 @@ impl LiteLlmClient {
             "model": params.model,
             "n": params.n,
             "size": params.size,
+            "output_format": params.format.as_str(),
             "response_format": "b64_json",
         });
 
@@ -83,16 +84,18 @@ impl LiteLlmClient {
     ) -> Result<Vec<String>, LiteLlmError> {
         let url = format!("{}/v1/images/edits", self.base_url);
 
+        let (extension, mime_type) = sniff_image_type(&image_bytes);
         let image_part = reqwest::multipart::Part::bytes(image_bytes)
-            .file_name("image.png")
-            .mime_str("image/png")
-            .expect("static mime type is valid");
+            .file_name(format!("image.{extension}"))
+            .mime_str(mime_type)
+            .expect("sniffed mime type is valid");
 
         let form = reqwest::multipart::Form::new()
             .text("prompt", params.prompt.clone())
             .text("model", params.model.clone())
             .text("n", params.n.to_string())
             .text("size", params.size.clone())
+            .text("output_format", params.format.as_str())
             .text("response_format", "b64_json")
             .part("image[]", image_part);
 
@@ -129,5 +132,51 @@ impl LiteLlmClient {
         }
 
         Ok(images)
+    }
+}
+
+/// Sniffs an image's format from its magic bytes, defaulting to PNG if
+/// unrecognized. Used to set an accurate filename/mime type on the
+/// multipart `image[]` part for `/v1/images/edits`.
+fn sniff_image_type(bytes: &[u8]) -> (&'static str, &'static str) {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        ("png", "image/png")
+    } else if bytes.starts_with(b"\xff\xd8\xff") {
+        ("jpg", "image/jpeg")
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        ("webp", "image/webp")
+    } else {
+        ("png", "image/png")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sniffs_png() {
+        let bytes = b"\x89PNG\r\n\x1a\nrest-of-file";
+        assert_eq!(sniff_image_type(bytes), ("png", "image/png"));
+    }
+
+    #[test]
+    fn sniffs_jpeg() {
+        let bytes = b"\xff\xd8\xffrest-of-file";
+        assert_eq!(sniff_image_type(bytes), ("jpg", "image/jpeg"));
+    }
+
+    #[test]
+    fn sniffs_webp() {
+        let mut bytes = b"RIFF".to_vec();
+        bytes.extend_from_slice(&[0, 0, 0, 0]); // chunk size, irrelevant here
+        bytes.extend_from_slice(b"WEBP");
+        assert_eq!(sniff_image_type(&bytes), ("webp", "image/webp"));
+    }
+
+    #[test]
+    fn falls_back_to_png_for_unknown_bytes() {
+        let bytes = b"totally unrelated data";
+        assert_eq!(sniff_image_type(bytes), ("png", "image/png"));
     }
 }
