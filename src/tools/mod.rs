@@ -114,7 +114,7 @@ mod tests {
         assert_eq!(resolved.n, 1);
         assert_eq!(resolved.size, "1024x1024");
         assert_eq!(resolved.format, Format::Png);
-        assert_eq!(resolved.save, false);
+        assert!(!resolved.save);
         assert_eq!(resolved.prompt, "hello");
     }
 
@@ -136,7 +136,7 @@ mod tests {
         assert_eq!(resolved.n, 4);
         assert_eq!(resolved.size, "2048x2048");
         assert_eq!(resolved.format, Format::Jpg);
-        assert_eq!(resolved.save, true);
+        assert!(resolved.save);
         assert_eq!(resolved.prompt, "hello");
     }
 
@@ -164,7 +164,7 @@ mod tests {
         assert_eq!(resolved.n, 3);
         assert_eq!(resolved.size, "512x512");
         assert_eq!(resolved.format, Format::Webp);
-        assert_eq!(resolved.save, true);
+        assert!(resolved.save);
     }
 
     #[test]

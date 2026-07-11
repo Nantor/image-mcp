@@ -1,6 +1,6 @@
 use rmcp::model::{CallToolResult, ContentBlock};
 
-use crate::config::{Config, ImageDefaults, LiteLlmConfig};
+use crate::config::Config;
 
 /// Runs the `list_models` tool. Never calls LiteLLM — just returns the
 /// configured `image_models` list.
@@ -11,6 +11,8 @@ pub fn run(config: &Config) -> CallToolResult {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::{ImageDefaults, LiteLlmConfig};
+
     use super::*;
 
     fn sample_config() -> Config {
