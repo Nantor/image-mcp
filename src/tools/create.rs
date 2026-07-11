@@ -24,13 +24,14 @@ pub async fn run(config: &Config, client: &LiteLlmClient, params: ImageParams) -
         }
     };
 
-    super::respond_with_images(images, resolved.format, resolved.save)
+    super::respond_with_images(images, resolved.format, resolved.save, &config.payload_limits)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::{Format, ImageDefaults, LiteLlmConfig};
+    use base64::Engine as _;
     use rmcp::model::ContentBlock;
 
     fn config_for_base_url(base_url: &str) -> Config {
@@ -40,7 +41,7 @@ mod tests {
                 api_key: "test-key".to_string(),
                 request_timeout_secs: None,
             },
-            image_models: vec![],
+            image_models: vec!["test-model".to_string()],
             create_defaults: ImageDefaults {
                 model: "test-model".to_string(),
                 n: 1,
@@ -54,6 +55,10 @@ mod tests {
                 size: "1024x1024".to_string(),
                 format: Format::Jpg,
                 save: false,
+            },
+            payload_limits: crate::config::PayloadLimits {
+                warn_inline_bytes: crate::config::DEFAULT_WARN_INLINE_BYTES,
+                max_inline_bytes: crate::config::DEFAULT_MAX_INLINE_BYTES,
             },
         }
     }
@@ -162,10 +167,16 @@ mod tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let mock_server = MockServer::start().await;
+        // Minimal valid PNG header plus payload, encoded as base64 so the
+        // image_store format check passes.
+        let mut png_bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        png_bytes.extend_from_slice(b"rest-of-file");
+        let png_b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+
         Mock::given(method("POST"))
             .and(path("/v1/images/generations"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "data": [{ "b64_json": "aGVsbG8=" }],
+                "data": [{ "b64_json": png_b64 }],
             })))
             .expect(1)
             .mount(&mock_server)

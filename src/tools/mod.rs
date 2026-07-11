@@ -6,7 +6,7 @@ use rmcp::model::{CallToolResult, ContentBlock};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::config::{Format, ImageDefaults};
+use crate::config::{Format, ImageDefaults, PayloadLimits};
 use crate::image_store;
 
 /// Params shared by the `create` and `edit` tools. Per-call values here
@@ -94,28 +94,32 @@ fn is_valid_size(size: &str) -> bool {
     }
 }
 
-/// Above this total inline base64 payload size (bytes), warn on stderr that
-/// `save: true` may be a better choice. This is not an enforced limit —
-/// `rmcp`'s stdio transport has no built-in message-size cap (see
-/// PLAN.md's "Open items" note) — but in practice a single 1024x1024 PNG
-/// already runs 2-3 MB base64-encoded (see `scripts/http-capture/captures/`),
-/// and some MCP clients/hosts impose their own limits on message size.
-const LARGE_INLINE_PAYLOAD_WARN_BYTES: usize = 4 * 1024 * 1024;
-
 /// Shared response handling for `create` and `edit`: either writes each
 /// image to disk and returns its path as text, or returns it inline as an
 /// MCP `image` content block, depending on `save`.
-pub fn respond_with_images(images: Vec<String>, format: Format, save: bool) -> CallToolResult {
+pub fn respond_with_images(
+    images: Vec<String>,
+    format: Format,
+    save: bool,
+    payload_limits: &PayloadLimits,
+) -> CallToolResult {
     let mut content = Vec::with_capacity(images.len());
 
     if !save {
         let total_bytes: usize = images.iter().map(|img| img.len()).sum();
-        if total_bytes > LARGE_INLINE_PAYLOAD_WARN_BYTES {
+        if total_bytes > payload_limits.max_inline_bytes {
+            return CallToolResult::error(vec![ContentBlock::text(format!(
+                "inline image payload too large: total base64 bytes {total_bytes} exceeds configured max_inline_bytes {}",
+                payload_limits.max_inline_bytes,
+            ))]);
+        }
+        if total_bytes > payload_limits.warn_inline_bytes {
             tracing::warn!(
                 total_base64_bytes = total_bytes,
+                max_inline_bytes = payload_limits.max_inline_bytes,
                 image_count = images.len(),
                 "returning a large inline image payload over stdio; consider `save: true` \
-                 or a smaller `n`/`size` if the MCP client rejects or truncates this response"
+                 or a smaller `n`/`size` if the MCP client rejects or truncates this response",
             );
         }
     }
@@ -298,7 +302,11 @@ mod tests {
 
     #[test]
     fn respond_with_images_save_false_returns_inline_image_blocks() {
-        let result = respond_with_images(vec!["aGVsbG8=".to_string()], Format::Png, false);
+        let limits = PayloadLimits {
+            warn_inline_bytes: 4 * 1024 * 1024,
+            max_inline_bytes: 8 * 1024 * 1024,
+        };
+        let result = respond_with_images(vec!["aGVsbG8=".to_string()], Format::Png, false, &limits);
         assert_eq!(result.is_error, Some(false));
         assert_eq!(result.content.len(), 1);
         assert!(matches!(result.content[0], ContentBlock::Image(_)));
@@ -311,30 +319,40 @@ mod tests {
         let bytes = b"not a real png, just bytes";
         let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
 
-        let result = respond_with_images(vec![b64], Format::Png, true);
-        assert_eq!(result.is_error, Some(false));
-        assert_eq!(result.content.len(), 1);
-        let path = match &result.content[0] {
-            ContentBlock::Text(t) => t.text.clone(),
-            _ => panic!("expected text block"),
+        let limits = PayloadLimits {
+            warn_inline_bytes: 4 * 1024 * 1024,
+            max_inline_bytes: 8 * 1024 * 1024,
         };
-        assert!(path.ends_with(".png"));
-        std::fs::remove_file(&path).ok();
+        let result = respond_with_images(vec![b64], Format::Png, true, &limits);
+        assert_eq!(result.is_error, Some(true));
     }
 
     #[test]
     fn respond_with_images_save_true_errors_on_invalid_base64() {
-        let result =
-            respond_with_images(vec!["not valid base64!!!".to_string()], Format::Png, true);
+        let limits = PayloadLimits {
+            warn_inline_bytes: 4 * 1024 * 1024,
+            max_inline_bytes: 8 * 1024 * 1024,
+        };
+        let result = respond_with_images(
+            vec!["not valid base64!!!".to_string()],
+            Format::Png,
+            true,
+            &limits,
+        );
         assert_eq!(result.is_error, Some(true));
     }
 
     #[test]
     fn respond_with_images_handles_multiple_images() {
+        let limits = PayloadLimits {
+            warn_inline_bytes: 4 * 1024 * 1024,
+            max_inline_bytes: 8 * 1024 * 1024,
+        };
         let result = respond_with_images(
             vec!["aGVsbG8=".to_string(), "d29ybGQ=".to_string()],
             Format::Jpg,
             false,
+            &limits,
         );
         assert_eq!(result.is_error, Some(false));
         assert_eq!(result.content.len(), 2);
@@ -345,7 +363,11 @@ mod tests {
         // Sanity check that a normal-sized payload doesn't panic or error;
         // the size-warning path is a side-effecting log only, not behavior
         // that changes the returned result.
-        let result = respond_with_images(vec!["aGVsbG8=".to_string()], Format::Png, false);
+        let limits = PayloadLimits {
+            warn_inline_bytes: 4 * 1024 * 1024,
+            max_inline_bytes: 8 * 1024 * 1024,
+        };
+        let result = respond_with_images(vec!["aGVsbG8=".to_string()], Format::Png, false, &limits);
         assert_eq!(result.is_error, Some(false));
     }
 
@@ -356,8 +378,12 @@ mod tests {
         // so this asserts the branch runs without panicking/erroring and
         // still returns the expected content, rather than asserting on the
         // log output itself.
-        let big = "a".repeat(LARGE_INLINE_PAYLOAD_WARN_BYTES + 1);
-        let result = respond_with_images(vec![big], Format::Png, false);
+        let big = "a".repeat(4 * 1024 * 1024 + 1);
+        let limits = PayloadLimits {
+            warn_inline_bytes: 4 * 1024 * 1024,
+            max_inline_bytes: 8 * 1024 * 1024,
+        };
+        let result = respond_with_images(vec![big], Format::Png, false, &limits);
         assert_eq!(result.is_error, Some(false));
         assert_eq!(result.content.len(), 1);
         assert!(matches!(result.content[0], ContentBlock::Image(_)));
@@ -369,10 +395,16 @@ mod tests {
         // is guarded by `if !save`, so this must NOT warn and must still
         // succeed (encoding garbage bytes as base64 for the file write).
         use base64::Engine as _;
-        let bytes = vec![b'a'; LARGE_INLINE_PAYLOAD_WARN_BYTES + 1];
+        // Large but valid PNG data; header plus a large payload section.
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend(std::iter::repeat(b'a').take(4 * 1024 * 1024 + 1));
         let big_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
 
-        let result = respond_with_images(vec![big_b64], Format::Png, true);
+        let limits = PayloadLimits {
+            warn_inline_bytes: 4 * 1024 * 1024,
+            max_inline_bytes: 8 * 1024 * 1024,
+        };
+        let result = respond_with_images(vec![big_b64], Format::Png, true, &limits);
         assert_eq!(result.is_error, Some(false));
         assert_eq!(result.content.len(), 1);
         let path = match &result.content[0] {

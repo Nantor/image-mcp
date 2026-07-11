@@ -20,7 +20,13 @@ async fn main() {
         .with_ansi(false)
         .init();
 
-    let config = match config::load_config() {
+    let config = match config::load_config().and_then(|cfg| {
+        if let Err(err) = config::validate_config(&cfg) {
+            Err(err)
+        } else {
+            Ok(cfg)
+        }
+    }) {
         Ok(config) => config,
         Err(err) => {
             eprintln!("image-mcp: failed to load config: {err}");

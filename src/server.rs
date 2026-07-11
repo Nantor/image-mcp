@@ -91,6 +91,10 @@ mod tests {
                 format: Format::Jpg,
                 save: false,
             },
+            payload_limits: crate::config::PayloadLimits {
+                warn_inline_bytes: crate::config::DEFAULT_WARN_INLINE_BYTES,
+                max_inline_bytes: crate::config::DEFAULT_MAX_INLINE_BYTES,
+            },
         }
     }
 
