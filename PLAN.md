@@ -49,11 +49,23 @@ struct ImageParams {
   (`{ type: "image", data: <base64>, mimeType: "image/png" }`)
 - `save: true` → write to disk, return `text` content block with the file path
 
+When `save: true`, images are written under an OS-specific directory:
+
+- **Linux**: `~/Pictures/image-mcp/` (if a Pictures directory is known), else `~/image-mcp/`, else `${TMPDIR}/image-mcp/`.
+- **macOS**: `~/Pictures/image-mcp/` (if a Pictures directory is known), else `~/image-mcp/`, else `${TMPDIR}/image-mcp/`.
+- **Windows**: `%USERPROFILE%\\Pictures\\image-mcp\\` (if a Pictures directory is known), else `%USERPROFILE%\\image-mcp\\`, else the system temp directory `image-mcp\\`.
+
 ## Config
 
-Location: `~/.config/image-mcp/config.json` (JSONC — comments allowed).
-**Must exist on startup or the process exits with a clear stderr error.**
-No hardcoded defaults, no auto-creation, no merging with built-in defaults.
+Location is OS-specific and resolved via the `dirs` crate. Typical paths:
+
+- **Linux**: `~/.config/image-mcp/config.json`
+- **macOS**: `~/Library/Application Support/image-mcp/config.json`
+- **Windows**: `%APPDATA%\\image-mcp\\config.json`
+
+The config file is JSONC (comments allowed).
+**It must exist on startup or the process exits with a clear stderr error.**
+There are no hardcoded defaults, no auto-creation, and no merging with built-in defaults.
 
 ```jsonc
 {

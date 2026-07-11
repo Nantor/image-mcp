@@ -397,7 +397,7 @@ mod tests {
         use base64::Engine as _;
         // Large but valid PNG data; header plus a large payload section.
         let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
-        bytes.extend(std::iter::repeat(b'a').take(4 * 1024 * 1024 + 1));
+        bytes.extend(std::iter::repeat_n(b'a', 4 * 1024 * 1024 + 1));
         let big_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
 
         let limits = PayloadLimits {
