@@ -40,7 +40,6 @@ jobs:
             archive: tar.gz
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            cross: true
             archive: tar.gz
           - target: x86_64-apple-darwin
             os: macos-latest
@@ -70,15 +69,7 @@ jobs:
           path: ~/.cargo/git
           key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}-${{ matrix.target }}
 
-      - name: Cross-compile (Linux arm64)
-        if: matrix.cross
-        uses: houseabsolute/commands-cross@v1
-        with:
-          command: cargo build --release --target ${{ matrix.target }}
-          target: ${{ matrix.target }}
-
       - name: Build release binary
-        if: !matrix.cross
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package
