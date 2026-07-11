@@ -21,10 +21,7 @@ mod tests {
                 base_url: "http://localhost:4000".to_string(),
                 api_key: "test-key".to_string(),
             },
-            image_models: vec![
-                "gpt-image-1".to_string(),
-                "dall-e-3".to_string(),
-            ],
+            image_models: vec!["gpt-image-1".to_string(), "dall-e-3".to_string()],
             create_defaults: ImageDefaults {
                 model: "gpt-image-1".to_string(),
                 n: 1,
@@ -56,7 +53,9 @@ mod tests {
         };
 
         let parsed: serde_json::Value = serde_json::from_str(&text).expect("should be valid JSON");
-        let models = parsed["image_models"].as_array().expect("image_models should be an array");
+        let models = parsed["image_models"]
+            .as_array()
+            .expect("image_models should be an array");
         assert_eq!(models.len(), 2);
         assert_eq!(models[0], "gpt-image-1");
         assert_eq!(models[1], "dall-e-3");
@@ -77,7 +76,9 @@ mod tests {
         };
 
         let parsed: serde_json::Value = serde_json::from_str(&text).expect("should be valid JSON");
-        let models = parsed["image_models"].as_array().expect("image_models should be an array");
+        let models = parsed["image_models"]
+            .as_array()
+            .expect("image_models should be an array");
         assert!(models.is_empty());
     }
 }

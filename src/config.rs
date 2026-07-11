@@ -114,15 +114,22 @@ mod tests {
     fn config_error_not_found() {
         let path = PathBuf::from("/fake/path/config.json");
         let err = ConfigError::NotFound(path.clone());
-        assert_eq!(err.to_string(), "config file not found at /fake/path/config.json");
+        assert_eq!(
+            err.to_string(),
+            "config file not found at /fake/path/config.json"
+        );
     }
 
     #[test]
     fn config_error_read_failed() {
         let path = PathBuf::from("/fake/path/config.json");
-        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "read access denied");
+        let io_err =
+            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "read access denied");
         let err = ConfigError::ReadFailed(path.clone(), io_err);
-        assert!(err.to_string().starts_with("failed to read config file at /fake/path/config.json:"));
+        assert!(
+            err.to_string()
+                .starts_with("failed to read config file at /fake/path/config.json:")
+        );
     }
 
     #[test]

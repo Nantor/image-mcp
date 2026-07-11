@@ -175,37 +175,58 @@ mod tests {
 
     #[test]
     fn strips_trailing_slash() {
-        assert_eq!(normalize_base_url("http://localhost:4000/"), "http://localhost:4000");
+        assert_eq!(
+            normalize_base_url("http://localhost:4000/"),
+            "http://localhost:4000"
+        );
     }
 
     #[test]
     fn keeps_url_without_trailing_slash() {
-        assert_eq!(normalize_base_url("http://localhost:4000"), "http://localhost:4000");
+        assert_eq!(
+            normalize_base_url("http://localhost:4000"),
+            "http://localhost:4000"
+        );
     }
 
     #[test]
     fn strips_multiple_trailing_slashes() {
-        assert_eq!(normalize_base_url("http://localhost:4000///"), "http://localhost:4000");
+        assert_eq!(
+            normalize_base_url("http://localhost:4000///"),
+            "http://localhost:4000"
+        );
     }
 
     #[test]
     fn strips_trailing_v1() {
-        assert_eq!(normalize_base_url("http://localhost:4000/v1"), "http://localhost:4000");
+        assert_eq!(
+            normalize_base_url("http://localhost:4000/v1"),
+            "http://localhost:4000"
+        );
     }
 
     #[test]
     fn keeps_v1_in_path() {
-        assert_eq!(normalize_base_url("http://localhost:4000/some/v1/path"), "http://localhost:4000/some/v1/path");
+        assert_eq!(
+            normalize_base_url("http://localhost:4000/some/v1/path"),
+            "http://localhost:4000/some/v1/path"
+        );
     }
 
     #[test]
     fn strips_trailing_slash_and_v1() {
-        assert_eq!(normalize_base_url("http://localhost:4000/v1/"), "http://localhost:4000");
+        assert_eq!(
+            normalize_base_url("http://localhost:4000/v1/"),
+            "http://localhost:4000"
+        );
     }
 
     #[test]
     fn handles_https() {
-        assert_eq!(normalize_base_url("https://adesso-ai-hub.3asabc.de/v1"), "https://adesso-ai-hub.3asabc.de");
+        assert_eq!(
+            normalize_base_url("https://adesso-ai-hub.3asabc.de/v1"),
+            "https://adesso-ai-hub.3asabc.de"
+        );
     }
 
     #[test]
