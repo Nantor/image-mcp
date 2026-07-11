@@ -270,3 +270,317 @@ mod tests {
         assert_eq!(sniff_image_type(bytes), ("png", "image/png"));
     }
 }
+
+#[cfg(test)]
+mod integration_tests {
+    use wiremock::matchers::{bearer_token, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+    use crate::config::Format;
+
+    fn sample_params() -> ResolvedParams {
+        ResolvedParams {
+            prompt: "a red bicycle".to_string(),
+            model: "gpt-image-1".to_string(),
+            n: 1,
+            size: "1024x1024".to_string(),
+            format: Format::Png,
+            save: false,
+        }
+    }
+
+    fn client_for(mock_server: &MockServer) -> LiteLlmClient {
+        let config = LiteLlmConfig {
+            base_url: mock_server.uri(),
+            api_key: "test-api-key".to_string(),
+            request_timeout_secs: None,
+        };
+        LiteLlmClient::new(&config)
+    }
+
+    #[tokio::test]
+    async fn generate_returns_decoded_images_on_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/images/generations"))
+            .and(bearer_token("test-api-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [{ "b64_json": "aGVsbG8=" }],
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let client = client_for(&mock_server);
+        let images = client.generate(&sample_params()).await.unwrap();
+
+        assert_eq!(images, vec!["aGVsbG8=".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn generate_sends_expected_json_body() {
+        use wiremock::matchers::body_json;
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/images/generations"))
+            .and(body_json(json!({
+                "prompt": "a red bicycle",
+                "model": "gpt-image-1",
+                "n": 1,
+                "size": "1024x1024",
+                "output_format": "png",
+                "response_format": "b64_json",
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [{ "b64_json": "aGVsbG8=" }],
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let client = client_for(&mock_server);
+        client.generate(&sample_params()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn generate_returns_multiple_images() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/images/generations"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [{ "b64_json": "aW1hZ2Ux" }, { "b64_json": "aW1hZ2Uy" }],
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let mut params = sample_params();
+        params.n = 2;
+        let client = client_for(&mock_server);
+        let images = client.generate(&params).await.unwrap();
+
+        assert_eq!(images, vec!["aW1hZ2Ux".to_string(), "aW1hZ2Uy".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn generate_surfaces_api_error_status_and_body() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/images/generations"))
+            .respond_with(
+                ResponseTemplate::new(400)
+                    .set_body_string(r#"{"error":"Unknown parameter: 'foo'"}"#),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = client_for(&mock_server);
+        let err = client.generate(&sample_params()).await.unwrap_err();
+
+        match err {
+            LiteLlmError::Api { status, body } => {
+                assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+                assert!(body.contains("Unknown parameter"));
+            }
+            other => panic!("expected LiteLlmError::Api, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn generate_errors_on_malformed_json_response() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/images/generations"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&mock_server)
+            .await;
+
+        let client = client_for(&mock_server);
+        let err = client.generate(&sample_params()).await.unwrap_err();
+
+        assert!(matches!(err, LiteLlmError::InvalidResponse(_)));
+    }
+
+    #[tokio::test]
+    async fn generate_errors_on_empty_image_data() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/images/generations"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": [] })))
+            .mount(&mock_server)
+            .await;
+
+        let client = client_for(&mock_server);
+        let err = client.generate(&sample_params()).await.unwrap_err();
+
+        assert!(matches!(err, LiteLlmError::EmptyResponse));
+    }
+
+    #[tokio::test]
+    async fn generate_errors_on_all_null_b64_json() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/images/generations"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [{ "b64_json": null }],
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let client = client_for(&mock_server);
+        let err = client.generate(&sample_params()).await.unwrap_err();
+
+        assert!(matches!(err, LiteLlmError::EmptyResponse));
+    }
+
+    #[tokio::test]
+    async fn edit_returns_decoded_images_on_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/images/edits"))
+            .and(bearer_token("test-api-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [{ "b64_json": "ZWRpdGVk" }],
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let client = client_for(&mock_server);
+        let images = client
+            .edit(&sample_params(), vec![b"\x89PNG\r\n\x1a\nrest".to_vec()])
+            .await
+            .unwrap();
+
+        assert_eq!(images, vec!["ZWRpdGVk".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn edit_sends_one_image_part_per_input_image() {
+        use wiremock::Request;
+
+        let mock_server = MockServer::start().await;
+
+        // wiremock doesn't parse multipart bodies out of the box, so we
+        // inspect the raw request body for the number of `image[]` field
+        // markers, which is the observable contract we care about: one
+        // part per input image (verified for real against LiteLLM — see
+        // scripts/http-capture/captures/edit/20260710T204757Z).
+        Mock::given(method("POST"))
+            .and(path("/v1/images/edits"))
+            .respond_with(move |req: &Request| {
+                let body = String::from_utf8_lossy(&req.body);
+                let image_part_count = body.matches("name=\"image[]\"").count();
+                assert_eq!(
+                    image_part_count, 3,
+                    "expected 3 image[] parts, body: {body}"
+                );
+                ResponseTemplate::new(200).set_body_json(json!({
+                    "data": [{ "b64_json": "b2s=" }],
+                }))
+            })
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let client = client_for(&mock_server);
+        let images = vec![
+            b"\x89PNG\r\n\x1a\nimg-a".to_vec(),
+            b"\xff\xd8\xffimg-b".to_vec(),
+            b"img-c-no-magic-bytes".to_vec(),
+        ];
+        client.edit(&sample_params(), images).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn edit_does_not_send_response_format_field() {
+        use wiremock::Request;
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/images/edits"))
+            .respond_with(move |req: &Request| {
+                let body = String::from_utf8_lossy(&req.body);
+                assert!(
+                    !body.contains("response_format"),
+                    "edit() must not send response_format, per PLAN.md; body: {body}"
+                );
+                ResponseTemplate::new(200).set_body_json(json!({
+                    "data": [{ "b64_json": "b2s=" }],
+                }))
+            })
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let client = client_for(&mock_server);
+        client
+            .edit(&sample_params(), vec![b"\x89PNG\r\n\x1a\nrest".to_vec()])
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn edit_surfaces_api_error_status_and_body() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/images/edits"))
+            .respond_with(
+                ResponseTemplate::new(400)
+                    .set_body_string(r#"{"error":"Unknown parameter: 'response_format'"}"#),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = client_for(&mock_server);
+        let err = client
+            .edit(&sample_params(), vec![b"\x89PNG\r\n\x1a\nrest".to_vec()])
+            .await
+            .unwrap_err();
+
+        match err {
+            LiteLlmError::Api { status, body } => {
+                assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+                assert!(body.contains("response_format"));
+            }
+            other => panic!("expected LiteLlmError::Api, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn request_fails_when_server_unreachable() {
+        // Bind a TCP listener to grab a genuinely free local port, then
+        // drop it before connecting, so nothing is listening there. Using
+        // a MockServer here doesn't work: `drop()` only schedules async
+        // shutdown, so the listener can still accept (and 404) for a
+        // window after drop.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let config = LiteLlmConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            api_key: "test-api-key".to_string(),
+            request_timeout_secs: None,
+        };
+        let client = LiteLlmClient::new(&config);
+
+        let result = client.generate(&sample_params()).await;
+        let err = result.expect_err("expected request to fail against an unbound port");
+        assert!(
+            matches!(err, LiteLlmError::Request { .. }),
+            "expected LiteLlmError::Request, got: {err:?}"
+        );
+    }
+}
