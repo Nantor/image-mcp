@@ -58,6 +58,42 @@ impl ImageParams {
     }
 }
 
+impl ResolvedParams {
+    /// Basic sanity checks run before hitting the network, so obviously
+    /// invalid values surface as an immediate, clear tool error instead of
+    /// round-tripping to LiteLLM for a less helpful API error.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.prompt.trim().is_empty() {
+            return Err("`prompt` must not be empty".to_string());
+        }
+        if self.n == 0 {
+            return Err("`n` must be at least 1".to_string());
+        }
+        if !is_valid_size(&self.size) {
+            return Err(format!(
+                "`size` must be in the form WIDTHxHEIGHT (e.g. \"1024x1024\"), got {:?}",
+                self.size
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Checks that `size` looks like `<digits>x<digits>` (e.g. `1024x1024`).
+/// This is a shape check only — the actual dimensions are still validated
+/// by LiteLLM/the model, since supported sizes vary per model.
+fn is_valid_size(size: &str) -> bool {
+    match size.split_once('x') {
+        Some((w, h)) => {
+            !w.is_empty()
+                && !h.is_empty()
+                && w.chars().all(|c| c.is_ascii_digit())
+                && h.chars().all(|c| c.is_ascii_digit())
+        }
+        None => false,
+    }
+}
+
 /// Shared response handling for `create` and `edit`: either writes each
 /// image to disk and returns its path as text, or returns it inline as an
 /// MCP `image` content block, depending on `save`.
@@ -182,5 +218,61 @@ mod tests {
         let defaults = sample_defaults();
         let resolved = params.resolve(&defaults);
         assert_eq!(resolved.prompt, "my prompt");
+    }
+
+    fn sample_resolved() -> ResolvedParams {
+        ResolvedParams {
+            prompt: "a prompt".to_string(),
+            model: "model".to_string(),
+            n: 1,
+            size: "1024x1024".to_string(),
+            format: Format::Png,
+            save: false,
+        }
+    }
+
+    #[test]
+    fn validate_accepts_sane_params() {
+        assert!(sample_resolved().validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_empty_prompt() {
+        let mut resolved = sample_resolved();
+        resolved.prompt = "   ".to_string();
+        let err = resolved.validate().unwrap_err();
+        assert!(err.contains("prompt"));
+    }
+
+    #[test]
+    fn validate_rejects_zero_n() {
+        let mut resolved = sample_resolved();
+        resolved.n = 0;
+        let err = resolved.validate().unwrap_err();
+        assert!(err.contains("`n`"));
+    }
+
+    #[test]
+    fn validate_rejects_malformed_size() {
+        for bad in ["1024", "1024x", "x1024", "1024x1024x1024", "wxh", ""] {
+            let mut resolved = sample_resolved();
+            resolved.size = bad.to_string();
+            assert!(
+                resolved.validate().is_err(),
+                "expected {bad:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_accepts_various_valid_sizes() {
+        for good in ["1024x1024", "512x768", "1x1"] {
+            let mut resolved = sample_resolved();
+            resolved.size = good.to_string();
+            assert!(
+                resolved.validate().is_ok(),
+                "expected {good:?} to be accepted"
+            );
+        }
     }
 }

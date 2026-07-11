@@ -29,10 +29,30 @@ impl Format {
     }
 }
 
+/// Default request timeout (seconds) applied to LiteLLM calls when
+/// `lite_llm.request_timeout_secs` is not set in config. Image
+/// generation/editing can be slow (large `n`/`size` combinations on models
+/// like `gpt-image-1` routinely take tens of seconds), but a hung LiteLLM
+/// proxy or dead upstream must not block a tool call forever.
+pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 180;
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct LiteLlmConfig {
     pub base_url: String,
     pub api_key: String,
+    /// Per-request timeout, in seconds, for calls to LiteLLM. Falls back to
+    /// `DEFAULT_REQUEST_TIMEOUT_SECS` if omitted.
+    #[serde(default)]
+    pub request_timeout_secs: Option<u64>,
+}
+
+impl LiteLlmConfig {
+    pub fn request_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(
+            self.request_timeout_secs
+                .unwrap_or(DEFAULT_REQUEST_TIMEOUT_SECS),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -95,6 +115,29 @@ mod tests {
         assert_eq!(Format::Png.as_str(), "png");
         assert_eq!(Format::Jpg.as_str(), "jpg");
         assert_eq!(Format::Webp.as_str(), "webp");
+    }
+
+    #[test]
+    fn request_timeout_falls_back_to_default() {
+        let config = LiteLlmConfig {
+            base_url: "http://localhost:4000".to_string(),
+            api_key: "key".to_string(),
+            request_timeout_secs: None,
+        };
+        assert_eq!(
+            config.request_timeout(),
+            std::time::Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS)
+        );
+    }
+
+    #[test]
+    fn request_timeout_uses_configured_value() {
+        let config = LiteLlmConfig {
+            base_url: "http://localhost:4000".to_string(),
+            api_key: "key".to_string(),
+            request_timeout_secs: Some(30),
+        };
+        assert_eq!(config.request_timeout(), std::time::Duration::from_secs(30));
     }
 
     #[test]

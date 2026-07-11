@@ -41,8 +41,12 @@ pub struct LiteLlmClient {
 
 impl LiteLlmClient {
     pub fn new(config: &LiteLlmConfig) -> Self {
+        let http = reqwest::Client::builder()
+            .timeout(config.request_timeout())
+            .build()
+            .expect("reqwest client with timeout should build");
         Self {
-            http: reqwest::Client::new(),
+            http,
             base_url: normalize_base_url(&config.base_url),
             api_key: config.api_key.clone(),
         }
@@ -234,6 +238,7 @@ mod tests {
         let config = LiteLlmConfig {
             base_url: "http://localhost:4000".to_string(),
             api_key: "super-secret-key".to_string(),
+            request_timeout_secs: None,
         };
         let client = LiteLlmClient::new(&config);
         assert_eq!(client.api_key, "super-secret-key");

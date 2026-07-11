@@ -11,6 +11,10 @@ use super::ImageParams;
 pub async fn run(config: &Config, client: &LiteLlmClient, params: ImageParams) -> CallToolResult {
     let resolved = params.resolve(&config.create_defaults);
 
+    if let Err(err) = resolved.validate() {
+        return CallToolResult::error(vec![ContentBlock::text(err)]);
+    }
+
     let images = match client.generate(&resolved).await {
         Ok(images) => images,
         Err(err) => {

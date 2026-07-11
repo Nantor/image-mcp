@@ -1,47 +1,33 @@
 # AGENTS.md
 
-## Status
+## Commands
 
-Pre-implementation. The repo currently contains only `PLAN.md` — no
-`Cargo.toml`, `src/`, or build/test tooling exists yet. There are no dev
-commands to run yet. Treat `PLAN.md` as the design spec and keep it in sync
-with any implementation decisions that diverge from it.
+- CI runs, in this order: `cargo check --all --all-targets --all-features`, `cargo test --all`, `cargo clippy --all --all-targets --all-features -- -D warnings`, `cargo fmt --all -- --check`.
+- There is no repo-local `rust-toolchain` file; GitHub Actions installs Rust `1.85.0`. If a local-only failure smells toolchain-related, check `rustc --version` before chasing code issues.
+- Focused test runs use normal Cargo filters, e.g. `cargo test missing_image_parameter_returns_error`.
 
-## Project
+## Architecture
 
-MCP server (Rust) exposing AI image generation/editing tools, backed by a
-LiteLLM proxy (OpenAI-compatible image API). Tools: `create`, `edit`,
-`list_models`. Full spec, schemas, and config format are in `PLAN.md` —
-read it before implementing.
+- Single binary crate: `src/main.rs` initializes `tracing`, loads config, and serves the MCP server over stdio.
+- `src/server.rs` is the wiring hub: the only exposed tools are `create`, `edit`, and `list_models`.
+- `src/tools/mod.rs` is the shared contract layer: `ImageParams`, config-default resolution, and the shared response path for inline image blocks vs saved file paths live there.
+- `src/litellm.rs` owns all LiteLLM HTTP behavior. Keep request shapes in sync with the capture scripts under `scripts/http-capture/`.
 
-## Hard constraints from the plan (easy to get wrong)
+## Gotchas
 
-- **Transport is stdio; stdout is reserved for JSON-RPC.** All logging
-  (via `tracing`) must go to stderr — never write to stdout outside the
-  protocol layer.
-- **Config at `~/.config/image-mcp/config.json` (JSONC) must exist on
-  startup.** No auto-creation, no built-in defaults, no merging. Missing/
-  invalid config → process exits immediately with a clear stderr message
-  (this is a startup failure, not a tool error).
-- **Runtime failures are tool errors, not process exits** — LiteLLM
-  unreachable, bad model, invalid image, disk write failure all become an
-  MCP tool result with `isError: true` so the calling LLM can retry/adjust.
-- `edit` has no mask parameter — masking/inpainting, image-to-image
-  strength, and outpaint/crop/resize are explicitly out of scope; editing
-  is purely prompt-driven (relying on models like `gpt-image-1`).
-- `create` and `edit` share one params struct but hit different endpoints
-  with different encodings: `create` → JSON POST to
-  `/v1/images/generations`; `edit` → multipart/form-data POST to
-  `/v1/images/edits` (image as `image[]` file part).
-- Both requests set `response_format: b64_json` — this is unverified
-  against real models; check LiteLLM/model behavior before assuming it
-  works.
-- `list_models` never calls LiteLLM — it just returns `image_models` from
-  local config.
-- Per-call tool params override config defaults (`create_defaults` /
-  `edit_defaults`), not the other way around.
-- `save: true` writes the image to disk and returns a `text` path; default
-  (`save: false`) returns an inline MCP `image` content block. Large
-  `n`/`size` combos with inline images may hit stdio message-size limits.
+- Stdout is protocol-only. Logging must stay on stderr; `main.rs` already configures `tracing` that way.
+- Startup config is mandatory at `~/.config/image-mcp/config.json`, parsed as JSONC. Missing or invalid config is a process-exit startup failure, not a tool error.
+- Runtime failures must surface as MCP tool errors (`CallToolResult::error`), not process exits.
+- Per-call tool params override `create_defaults` / `edit_defaults`; do not add built-in fallback defaults.
+- `list_models` is local-only. It returns `config.image_models` and must not call LiteLLM.
+- `edit` is prompt-driven only: no mask/inpainting API surface.
+- `edit` accepts one or more base64 images and sends each to LiteLLM as its own `image[]` multipart part.
+- `create` sends `response_format: "b64_json"`; `edit` intentionally does not. `PLAN.md` documents the verified LiteLLM behavior behind that split.
+- `save: true` writes files under the user's pictures dir when available, else home, else temp. Default `save: false` returns inline MCP `image` blocks, which can get large over stdio.
+
+## Repo Notes
+
+- `PLAN.md` is still the design spec; update it when implementation behavior changes.
+- `scripts/http-capture/create.sh` and `scripts/http-capture/edit.sh` are the fastest way to inspect raw LiteLLM requests without going through MCP. They read the same config file and write captures under `scripts/http-capture/captures/`, which is gitignored.
 </content>
 </invoke>

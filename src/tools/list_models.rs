@@ -20,6 +20,7 @@ mod tests {
             lite_llm: LiteLlmConfig {
                 base_url: "http://localhost:4000".to_string(),
                 api_key: "test-key".to_string(),
+                request_timeout_secs: None,
             },
             image_models: vec!["gpt-image-1".to_string(), "dall-e-3".to_string()],
             create_defaults: ImageDefaults {

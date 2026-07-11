@@ -31,6 +31,10 @@ pub async fn run(config: &Config, client: &LiteLlmClient, params: ImageParams) -
 
     let resolved = params.resolve(&config.edit_defaults);
 
+    if let Err(err) = resolved.validate() {
+        return CallToolResult::error(vec![ContentBlock::text(err)]);
+    }
+
     let images = match client.edit(&resolved, image_bytes_list).await {
         Ok(images) => images,
         Err(err) => {
@@ -51,6 +55,7 @@ mod tests {
             lite_llm: LiteLlmConfig {
                 base_url: "http://localhost:4000".to_string(),
                 api_key: "test-key".to_string(),
+                request_timeout_secs: None,
             },
             image_models: vec![],
             create_defaults: ImageDefaults {

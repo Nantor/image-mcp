@@ -59,7 +59,8 @@ No hardcoded defaults, no auto-creation, no merging with built-in defaults.
 {
   "lite_llm": {
     "base_url": "http://localhost:4000",
-    "api_key": "sk-..."
+    "api_key": "sk-...",
+    "request_timeout_secs": 180 // optional, defaults to 180
   },
   "image_models": ["gpt-image-1"],
   "create_defaults": {
