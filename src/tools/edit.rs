@@ -51,9 +51,13 @@ mod tests {
     use crate::config::{Format, ImageDefaults, LiteLlmConfig};
 
     fn sample_config() -> Config {
+        config_for_base_url("http://localhost:4000")
+    }
+
+    fn config_for_base_url(base_url: &str) -> Config {
         Config {
             lite_llm: LiteLlmConfig {
-                base_url: "http://localhost:4000".to_string(),
+                base_url: base_url.to_string(),
                 api_key: "test-key".to_string(),
                 request_timeout_secs: None,
             },
@@ -75,22 +79,24 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn missing_image_parameter_returns_error() {
-        let config = sample_config();
-        let client = LiteLlmClient::new(&config.lite_llm);
-
-        let params = ImageParams {
+    fn sample_params(image: Option<Vec<String>>) -> ImageParams {
+        ImageParams {
             prompt: "edit this".to_string(),
             model: None,
             n: None,
             size: None,
             format: None,
-            image: None,
+            image,
             save: None,
-        };
+        }
+    }
 
-        let result = run(&config, &client, params).await;
+    #[tokio::test]
+    async fn missing_image_parameter_returns_error() {
+        let config = sample_config();
+        let client = LiteLlmClient::new(&config.lite_llm);
+
+        let result = run(&config, &client, sample_params(None)).await;
         assert_eq!(result.is_error, Some(true));
 
         let content = &result.content[0];
@@ -106,15 +112,7 @@ mod tests {
         let config = sample_config();
         let client = LiteLlmClient::new(&config.lite_llm);
 
-        let params = ImageParams {
-            prompt: "edit this".to_string(),
-            model: None,
-            n: None,
-            size: None,
-            format: None,
-            image: Some(vec!["not-valid-base64!!!".to_string()]),
-            save: None,
-        };
+        let params = sample_params(Some(vec!["not-valid-base64!!!".to_string()]));
 
         let result = run(&config, &client, params).await;
         assert_eq!(result.is_error, Some(true));
@@ -128,29 +126,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn valid_base64_but_empty_returns_error() {
-        let config = sample_config();
+    async fn valid_base64_but_empty_decodes_and_reaches_client() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        // "" is valid base64 (decodes to empty bytes). This test verifies
+        // the decode path works and the request actually reaches the
+        // LiteLLM client (mocked here) rather than erroring earlier.
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/images/edits"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{ "b64_json": "ZWRpdGVk" }],
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = config_for_base_url(&mock_server.uri());
         let client = LiteLlmClient::new(&config.lite_llm);
 
-        // "" is valid base64 (decodes to empty bytes), but it will
-        // reach the client.edit() call which will fail. This test
-        // verifies the decode path works.
-        let params = ImageParams {
-            prompt: "edit this".to_string(),
-            model: None,
-            n: None,
-            size: None,
-            format: None,
-            image: Some(vec!["".to_string()]),
-            save: None,
-        };
+        let params = sample_params(Some(vec!["".to_string()]));
 
-        // base64::STANDARD.decode("") returns Ok(empty vec), so we proceed
-        // to client.edit() which hits the network and errors (since there
-        // is no real LiteLLM proxy at localhost:4000). We just assert
-        // isError=true regardless of the specific error message.
         let result = run(&config, &client, params).await;
-        assert_eq!(result.is_error, Some(true));
+        assert_eq!(result.is_error, Some(false));
     }
 
     #[tokio::test]
@@ -158,15 +157,7 @@ mod tests {
         let config = sample_config();
         let client = LiteLlmClient::new(&config.lite_llm);
 
-        let params = ImageParams {
-            prompt: "edit this".to_string(),
-            model: None,
-            n: None,
-            size: None,
-            format: None,
-            image: Some(vec![]),
-            save: None,
-        };
+        let params = sample_params(Some(vec![]));
 
         let result = run(&config, &client, params).await;
         assert_eq!(result.is_error, Some(true));
@@ -184,15 +175,10 @@ mod tests {
         let config = sample_config();
         let client = LiteLlmClient::new(&config.lite_llm);
 
-        let params = ImageParams {
-            prompt: "edit this".to_string(),
-            model: None,
-            n: None,
-            size: None,
-            format: None,
-            image: Some(vec!["".to_string(), "not-valid-base64!!!".to_string()]),
-            save: None,
-        };
+        let params = sample_params(Some(vec![
+            "".to_string(),
+            "not-valid-base64!!!".to_string(),
+        ]));
 
         let result = run(&config, &client, params).await;
         assert_eq!(result.is_error, Some(true));
@@ -203,6 +189,80 @@ mod tests {
             _ => panic!("expected text block"),
         };
         assert!(text.contains("invalid base64"));
+    }
+
+    #[tokio::test]
+    async fn empty_prompt_returns_validation_error_without_network_call() {
+        let config = sample_config();
+        let client = LiteLlmClient::new(&config.lite_llm);
+
+        let mut params = sample_params(Some(vec!["aGVsbG8=".to_string()]));
+        params.prompt = "   ".to_string();
+
+        let result = run(&config, &client, params).await;
+        assert_eq!(result.is_error, Some(true));
+
+        let content = &result.content[0];
+        let text = match content {
+            ContentBlock::Text(t) => t.text.clone(),
+            _ => panic!("expected text block"),
+        };
+        assert!(text.contains("prompt"));
+    }
+
+    #[tokio::test]
+    async fn successful_edit_returns_inline_image_block() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/images/edits"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{ "b64_json": "ZWRpdGVk" }],
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = config_for_base_url(&mock_server.uri());
+        let client = LiteLlmClient::new(&config.lite_llm);
+
+        let params = sample_params(Some(vec!["aGVsbG8=".to_string()]));
+
+        let result = run(&config, &client, params).await;
+        assert_eq!(result.is_error, Some(false));
+        assert_eq!(result.content.len(), 1);
+        assert!(matches!(result.content[0], ContentBlock::Image(_)));
+    }
+
+    #[tokio::test]
+    async fn litellm_api_error_surfaces_as_edit_failed() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/images/edits"))
+            .respond_with(ResponseTemplate::new(400).set_body_string(r#"{"error":"bad request"}"#))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = config_for_base_url(&mock_server.uri());
+        let client = LiteLlmClient::new(&config.lite_llm);
+
+        let params = sample_params(Some(vec!["aGVsbG8=".to_string()]));
+
+        let result = run(&config, &client, params).await;
+        assert_eq!(result.is_error, Some(true));
+
+        let content = &result.content[0];
+        let text = match content {
+            ContentBlock::Text(t) => t.text.clone(),
+            _ => panic!("expected text block"),
+        };
+        assert!(text.contains("edit failed"));
     }
 
     #[test]

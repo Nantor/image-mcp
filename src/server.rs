@@ -62,3 +62,108 @@ impl ServerHandler for ImageMcpServer {
             )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Format, ImageDefaults, LiteLlmConfig};
+    use rmcp::model::ContentBlock;
+
+    fn sample_config() -> Config {
+        Config {
+            lite_llm: LiteLlmConfig {
+                base_url: "http://localhost:4000".to_string(),
+                api_key: "test-key".to_string(),
+                request_timeout_secs: None,
+            },
+            image_models: vec!["gpt-image-1".to_string()],
+            create_defaults: ImageDefaults {
+                model: "gpt-image-1".to_string(),
+                n: 1,
+                size: "1024x1024".to_string(),
+                format: Format::Png,
+                save: false,
+            },
+            edit_defaults: ImageDefaults {
+                model: "gpt-image-1".to_string(),
+                n: 1,
+                size: "1024x1024".to_string(),
+                format: Format::Jpg,
+                save: false,
+            },
+        }
+    }
+
+    #[test]
+    fn new_stores_config_and_builds_client() {
+        let server = ImageMcpServer::new(sample_config());
+        assert_eq!(server.config.image_models, vec!["gpt-image-1".to_string()]);
+    }
+
+    #[test]
+    fn get_info_advertises_tools_and_instructions() {
+        let server = ImageMcpServer::new(sample_config());
+        let info = server.get_info();
+
+        assert!(info.capabilities.tools.is_some());
+        assert_eq!(info.protocol_version, ProtocolVersion::V_2024_11_05);
+        let instructions = info.instructions.expect("instructions should be set");
+        assert!(instructions.contains("create"));
+        assert!(instructions.contains("edit"));
+        assert!(instructions.contains("list_models"));
+    }
+
+    #[test]
+    fn list_models_tool_reflects_config() {
+        let server = ImageMcpServer::new(sample_config());
+        let result = server.list_models().expect("list_models should not error");
+
+        assert_eq!(result.is_error, Some(false));
+        let content = &result.content[0];
+        let text = match content {
+            ContentBlock::Text(t) => t.text.clone(),
+            _ => panic!("expected text block"),
+        };
+        assert!(text.contains("gpt-image-1"));
+    }
+
+    #[tokio::test]
+    async fn create_tool_surfaces_validation_error() {
+        let server = ImageMcpServer::new(sample_config());
+        let params = Parameters(ImageParams {
+            prompt: "   ".to_string(),
+            model: None,
+            n: None,
+            size: None,
+            format: None,
+            image: None,
+            save: None,
+        });
+
+        let result = server
+            .create(params)
+            .await
+            .expect("create should return a CallToolResult, not an McpError");
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn edit_tool_surfaces_missing_image_error() {
+        let server = ImageMcpServer::new(sample_config());
+        let params = Parameters(ImageParams {
+            prompt: "edit this".to_string(),
+            model: None,
+            n: None,
+            size: None,
+            format: None,
+            image: None,
+            save: None,
+        });
+
+        let result = server
+            .edit(params)
+            .await
+            .expect("edit should return a CallToolResult, not an McpError");
+        assert_eq!(result.is_error, Some(true));
+    }
+}

@@ -18,14 +18,24 @@ pub enum ImageStoreError {
 /// directory can be determined), returning the path written to.
 pub fn save_image(b64_data: &str, format: Format) -> Result<PathBuf, ImageStoreError> {
     let bytes = base64::engine::general_purpose::STANDARD.decode(b64_data)?;
-
     let dir = save_dir()?;
-    std::fs::create_dir_all(&dir).map_err(|e| ImageStoreError::CreateDir(dir.clone(), e))?;
+    write_image_to_dir(&bytes, &dir, format)
+}
+
+/// Writes already-decoded image bytes under `dir`, creating it if needed.
+/// Split out from `save_image` so the create-dir/write error paths can be
+/// exercised directly against an arbitrary directory in tests.
+fn write_image_to_dir(
+    bytes: &[u8],
+    dir: &std::path::Path,
+    format: Format,
+) -> Result<PathBuf, ImageStoreError> {
+    std::fs::create_dir_all(dir).map_err(|e| ImageStoreError::CreateDir(dir.to_path_buf(), e))?;
 
     let filename = format!("image-mcp-{}.{}", uuid::Uuid::new_v4(), format.as_str());
     let path = dir.join(filename);
 
-    std::fs::write(&path, &bytes).map_err(|e| ImageStoreError::Write(path.clone(), e))?;
+    std::fs::write(&path, bytes).map_err(|e| ImageStoreError::Write(path.clone(), e))?;
 
     Ok(path)
 }
@@ -62,5 +72,48 @@ mod tests {
     fn save_image_rejects_invalid_base64() {
         let result = save_image("not valid base64!!!", Format::Png);
         assert!(matches!(result, Err(ImageStoreError::Decode(_))));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_image_to_dir_fails_when_parent_dir_not_writable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).expect("create base test dir");
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o500))
+            .expect("chmod base test dir read+execute only");
+
+        let target = base.join("nested");
+        let result = write_image_to_dir(b"bytes", &target, Format::Png);
+
+        // Restore writable permissions so the outer tempdir can be cleaned up.
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700))
+            .expect("restore base test dir permissions");
+        std::fs::remove_dir_all(&base).ok();
+
+        match result {
+            Err(ImageStoreError::CreateDir(path, _)) => assert_eq!(path, target),
+            other => panic!("expected ImageStoreError::CreateDir, got {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_image_to_dir_fails_when_dir_not_writable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500))
+            .expect("chmod test dir read+execute only");
+
+        let result = write_image_to_dir(b"bytes", &dir, Format::Png);
+
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .expect("restore test dir permissions");
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert!(matches!(result, Err(ImageStoreError::Write(_, _))));
     }
 }

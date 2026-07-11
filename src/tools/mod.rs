@@ -348,4 +348,37 @@ mod tests {
         let result = respond_with_images(vec!["aGVsbG8=".to_string()], Format::Png, false);
         assert_eq!(result.is_error, Some(false));
     }
+
+    #[test]
+    fn respond_with_images_exercises_large_payload_warn_path() {
+        // Exceeds LARGE_INLINE_PAYLOAD_WARN_BYTES to exercise the
+        // tracing::warn! branch. The warning is a side-effecting log only,
+        // so this asserts the branch runs without panicking/erroring and
+        // still returns the expected content, rather than asserting on the
+        // log output itself.
+        let big = "a".repeat(LARGE_INLINE_PAYLOAD_WARN_BYTES + 1);
+        let result = respond_with_images(vec![big], Format::Png, false);
+        assert_eq!(result.is_error, Some(false));
+        assert_eq!(result.content.len(), 1);
+        assert!(matches!(result.content[0], ContentBlock::Image(_)));
+    }
+
+    #[test]
+    fn respond_with_images_large_payload_warn_path_with_save() {
+        // Same large-payload branch, but with save=true: the warning check
+        // is guarded by `if !save`, so this must NOT warn and must still
+        // succeed (encoding garbage bytes as base64 for the file write).
+        use base64::Engine as _;
+        let bytes = vec![b'a'; LARGE_INLINE_PAYLOAD_WARN_BYTES + 1];
+        let big_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+        let result = respond_with_images(vec![big_b64], Format::Png, true);
+        assert_eq!(result.is_error, Some(false));
+        assert_eq!(result.content.len(), 1);
+        let path = match &result.content[0] {
+            ContentBlock::Text(t) => t.text.clone(),
+            _ => panic!("expected text block"),
+        };
+        std::fs::remove_file(&path).ok();
+    }
 }

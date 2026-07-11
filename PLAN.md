@@ -86,7 +86,8 @@ Per-call params in a tool invocation override the matching config default.
 
 - **Language**: Rust
 - **MCP SDK**: [`rmcp`](https://docs.rs/rmcp) (official SDK) — features:
-  `server`, `macros`, `transport-io` (stdio)
+  `server`, `macros`, `transport-io` (stdio), `schemars` (for
+  `JsonSchema`-derived tool param schemas)
 - **HTTP client**: `reqwest` — direct calls to LiteLLM, no SDK wrapper
 - **Transport**: stdio
 - **Logging**: `tracing` to stderr (stdout is reserved for JSON-RPC on
@@ -108,9 +109,10 @@ image-mcp/
 ├── src/
 │   ├── main.rs          # entrypoint: load config, init tracing, serve stdio
 │   ├── config.rs        # JSONC config loading + structs
+│   ├── server.rs        # ImageMcpServer: rmcp tool_router wiring for create/edit/list_models
 │   ├── litellm.rs        # reqwest client: generate() [JSON], edit() [multipart], shared b64_json response parsing
 │   ├── tools/
-│   │   ├── mod.rs
+│   │   ├── mod.rs        # ImageParams/ResolvedParams, validation, shared respond_with_images
 │   │   ├── create.rs     # `create` tool impl
 │   │   ├── edit.rs       # `edit` tool impl
 │   │   └── list_models.rs
