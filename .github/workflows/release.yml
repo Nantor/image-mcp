@@ -35,14 +35,18 @@ jobs:
         id: version
         run: |
           VERSION=$(grep -m1 '^[[:space:]]*version[[:space:]]*=' Cargo.toml | sed 's/.*=[[:space:]]*"\([^"]*\)".*/\1/')
+          echo "Extracted version from Cargo.toml: ${VERSION}"
           echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Resolve release inputs
         id: resolve
         run: |
           TAG="v${{ steps.version.outputs.VERSION }}"
+          echo "Event: ${{ github.event_name }}"
+          echo "Computed tag from Cargo.toml version: ${TAG}"
 
           if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "Triggered by tag push (${{ github.ref_name }}) -> releasing directly, no tag creation needed"
             echo "create_tag=false" >> $GITHUB_OUTPUT
             echo "ref=${{ github.ref }}" >> $GITHUB_OUTPUT
             echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
@@ -51,6 +55,7 @@ jobs:
           fi
 
           if [[ "${{ github.event.workflow_run.conclusion }}" != "success" ]]; then
+            echo "Triggering CI run did not succeed (conclusion: ${{ github.event.workflow_run.conclusion }}) -> skipping release"
             echo "create_tag=false" >> $GITHUB_OUTPUT
             echo "ref=refs/tags/${TAG}" >> $GITHUB_OUTPUT
             echo "tag=${TAG}" >> $GITHUB_OUTPUT
@@ -58,21 +63,26 @@ jobs:
             exit 0
           fi
 
+          echo "CI succeeded on master (sha: ${{ github.event.workflow_run.head_sha }}) -> checking for existing tag ${TAG}"
           git fetch --tags 2>/dev/null || true
           if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
             TAG_SHA=$(git rev-list -n 1 "${TAG}")
+            echo "Tag ${TAG} already exists, pointing at ${TAG_SHA}"
             if [[ "${TAG_SHA}" == "${{ github.event.workflow_run.head_sha }}" ]]; then
+              echo "Tag already points at this commit -> release was already handled by the tag-push run, skipping"
               echo "create_tag=false" >> $GITHUB_OUTPUT
               echo "ref=refs/tags/${TAG}" >> $GITHUB_OUTPUT
               echo "tag=${TAG}" >> $GITHUB_OUTPUT
               echo "should_release=false" >> $GITHUB_OUTPUT
             else
+              echo "Tag points at a different commit -> not creating/moving it, skipping release for this run"
               echo "create_tag=false" >> $GITHUB_OUTPUT
               echo "ref=refs/tags/${TAG}" >> $GITHUB_OUTPUT
               echo "tag=${TAG}" >> $GITHUB_OUTPUT
               echo "should_release=false" >> $GITHUB_OUTPUT
             fi
           else
+            echo "Tag ${TAG} does not exist yet -> will create and push it, triggering a follow-up run via tag push"
             echo "create_tag=true" >> $GITHUB_OUTPUT
             echo "ref=refs/tags/${TAG}" >> $GITHUB_OUTPUT
             echo "tag=${TAG}" >> $GITHUB_OUTPUT
@@ -86,10 +96,13 @@ jobs:
         run: |
           TAG="${{ steps.resolve.outputs.tag }}"
           if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists (created by a concurrent run?), skipping tag creation"
             exit 0
           fi
+          echo "Creating tag ${TAG} at ${{ github.event.workflow_run.head_sha }} and pushing it"
           git tag "$TAG" "${{ github.event.workflow_run.head_sha }}"
           git push origin "$TAG"
+          echo "Tag ${TAG} pushed"
 
   create-release:
     name: Create Release
@@ -103,11 +116,14 @@ jobs:
         run: |
           TAG="${{ needs.prepare.outputs.tag }}"
           if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists, skipping creation"
             exit 0
           fi
+          echo "Creating GitHub release ${TAG}"
           gh release create "$TAG" \
             --title "$TAG" \
             --generate-notes
+          echo "Release ${TAG} created"
 
   build:
     name: Build ${{ matrix.target }}
@@ -145,13 +161,16 @@ jobs:
       - name: Install Linux ARM64 linker
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
+          echo "Installing gcc-aarch64-linux-gnu cross linker"
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Install Rust toolchain
         run: |
+          echo "Setting up Rust $RUST_VERSION with target ${{ matrix.target }}"
           rustup default "$RUST_VERSION"
           rustup target add ${{ matrix.target }}
+          rustc --version
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -166,7 +185,10 @@ jobs:
           key: ${{ runner.os }}-cargo-index-${{ env.RUST_VERSION }}-${{ hashFiles('**/Cargo.lock') }}-${{ matrix.target }}
 
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
+        run: |
+          echo "Building release binary for ${{ matrix.target }}"
+          cargo build --release --target ${{ matrix.target }}
+          echo "Build finished"
 
       - name: Package
         shell: bash
@@ -181,6 +203,7 @@ jobs:
 
           mkdir -p dist
           cp "target/${{ matrix.target }}/release/${BIN}" dist/
+          echo "Copied ${BIN} to dist/"
 
           if [[ "${{ matrix.archive }}" == "zip" ]]; then
             7z a "image-mcp-${VERSION}-${TARGET}.zip" dist/${BIN}
@@ -189,9 +212,13 @@ jobs:
             tar -czf "image-mcp-${VERSION}-${TARGET}.tar.gz" dist/${BIN}
             UPLOAD_FILE="image-mcp-${VERSION}-${TARGET}.tar.gz"
           fi
+          echo "Packaged archive: ${UPLOAD_FILE}"
           echo "UPLOAD_FILE=${UPLOAD_FILE}" >> $GITHUB_ENV
 
       - name: Upload release artifact
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload ${{ needs.prepare.outputs.tag }} ${{ env.UPLOAD_FILE }} --clobber
+        run: |
+          echo "Uploading ${{ env.UPLOAD_FILE }} to release ${{ needs.prepare.outputs.tag }}"
+          gh release upload ${{ needs.prepare.outputs.tag }} ${{ env.UPLOAD_FILE }} --clobber
+          echo "Upload complete"

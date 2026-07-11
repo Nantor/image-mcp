@@ -20,8 +20,13 @@ jobs:
 
       - name: Install Rust toolchain
         run: |
+          echo "Installing Rust toolchain $RUST_VERSION (clippy + rustfmt)"
           rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy --component rustfmt
           rustup default "$RUST_VERSION"
+          echo "Active toolchain:"
+          rustup show active-toolchain
+          rustc --version
+          cargo --version
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -42,13 +47,25 @@ jobs:
           key: ${{ runner.os }}-cargo-target-${{ env.RUST_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: cargo check
-        run: cargo check --all --all-targets --all-features
+        run: |
+          echo "Running cargo check --all --all-targets --all-features"
+          cargo check --all --all-targets --all-features
+          echo "cargo check passed"
 
       - name: cargo test
-        run: cargo test --all
+        run: |
+          echo "Running cargo test --all"
+          cargo test --all
+          echo "cargo test passed"
 
       - name: cargo clippy
-        run: cargo clippy --all --all-targets --all-features -- -D warnings
+        run: |
+          echo "Running cargo clippy --all --all-targets --all-features -- -D warnings"
+          cargo clippy --all --all-targets --all-features -- -D warnings
+          echo "cargo clippy passed with no warnings"
 
       - name: cargo fmt --check
-        run: cargo fmt --all -- --check
+        run: |
+          echo "Running cargo fmt --all -- --check"
+          cargo fmt --all -- --check
+          echo "cargo fmt check passed"
