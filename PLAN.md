@@ -119,28 +119,27 @@ image-mcp/
 │   └── image_store.rs    # handles `save: true` — writes to disk, returns path
 ```
 
-## Open items to validate during implementation
+## Validated behavior
 
-- ~~Confirm whether target models actually honor `response_format:
-  b64_json` on both `/v1/images/generations` and `/v1/images/edits`.~~
-  Resolved: `create` honors it; `edit` rejects it on at least
-  `gpt-image-1.5` and no longer sends it (see above).
-- ~~Confirm exact multipart field names LiteLLM expects for
-  `/v1/images/edits`~~ Resolved against a live LiteLLM instance: plain
-  form fields for `prompt`/`model`/`n`/`size`/`output_format`, one
-  `image[]` file part per input image (multiple parts accepted and
-  composited by the model).
-- ~~Verify practical message-size limits for the `image` content block over
-  stdio with your actual MCP client, since large `n`/`size` combinations may
-  need `save: true` to avoid oversized JSON-RPC messages.~~ Resolved: the
-  `rmcp` stdio transport itself imposes no message-size cap — outgoing
-  messages are written with `JsonRpcMessageCodec::default()`
-  (`max_length: usize::MAX`), and `receive()` reads incoming lines into an
-  unbounded, growable buffer. So any practical limit comes entirely from
-  the MCP client/host on the other end of stdio, which varies and can't be
+All items originally flagged for validation during implementation have
+been resolved and are covered by tests:
+
+- `response_format: b64_json` — honored by `create` on
+  `/v1/images/generations`; rejected by `edit` on `/v1/images/edits` (at
+  least `gpt-image-1.5` returns a 400 `Unknown parameter`), so `edit` no
+  longer sends it. See "Tool schemas" above.
+- Multipart field names for `/v1/images/edits` — confirmed against a live
+  LiteLLM instance: plain form fields for
+  `prompt`/`model`/`n`/`size`/`output_format`, plus one `image[]` file
+  part per input image (multiple parts accepted and composited by the
+  model).
+- stdio message-size limits — the `rmcp` stdio transport itself imposes no
+  cap (`JsonRpcMessageCodec::default()` uses `max_length: usize::MAX`, and
+  `receive()` reads into an unbounded, growable buffer). Any practical
+  limit comes from the MCP client/host, which varies and can't be
   verified from this repo. Real captures under
   `scripts/http-capture/captures/` show a single 1024x1024 PNG already
-  runs ~2-3 MB base64-encoded, so this scales quickly with `n`. As a
-  mitigation, `respond_with_images` now logs a stderr warning (not an
-  error — the request still succeeds) when the total inline payload
-  exceeds 4 MB, suggesting `save: true` as an alternative.
+  runs ~2-3 MB base64-encoded, scaling quickly with `n`. As a mitigation,
+  `respond_with_images` logs a stderr warning (not an error) when the
+  total inline payload exceeds 4 MB, suggesting `save: true` as an
+  alternative.
