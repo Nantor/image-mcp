@@ -153,7 +153,11 @@ pub fn validate_config(config: &Config) -> Result<(), ConfigError> {
         ));
     }
 
-    validate_image_defaults("create_defaults", &config.create_defaults, &config.image_models)?;
+    validate_image_defaults(
+        "create_defaults",
+        &config.create_defaults,
+        &config.image_models,
+    )?;
     validate_image_defaults("edit_defaults", &config.edit_defaults, &config.image_models)?;
 
     let limits = &config.payload_limits;
@@ -363,7 +367,10 @@ mod tests {
 
         let err = validate_config(&config).unwrap_err();
         assert!(matches!(err, ConfigError::Invalid(_)));
-        assert!(err.to_string().contains("image_models must contain at least one model"));
+        assert!(
+            err.to_string()
+                .contains("image_models must contain at least one model")
+        );
     }
 
     #[test]
@@ -397,9 +404,10 @@ mod tests {
 
         let err = validate_config(&config).unwrap_err();
         assert!(matches!(err, ConfigError::Invalid(_)));
-        assert!(err
-            .to_string()
-            .contains("create_defaults.model (unknown-model) must be present"));
+        assert!(
+            err.to_string()
+                .contains("create_defaults.model (unknown-model) must be present")
+        );
     }
 
     #[test]
@@ -433,7 +441,10 @@ mod tests {
 
         let err = validate_config(&config).unwrap_err();
         assert!(matches!(err, ConfigError::Invalid(_)));
-        assert!(err.to_string().contains("create_defaults.n must be at least 1"));
+        assert!(
+            err.to_string()
+                .contains("create_defaults.n must be at least 1")
+        );
     }
 
     #[test]
@@ -467,7 +478,10 @@ mod tests {
 
         let err = validate_config(&config).unwrap_err();
         assert!(matches!(err, ConfigError::Invalid(_)));
-        assert!(err.to_string().contains("create_defaults.size must be in the form"));
+        assert!(
+            err.to_string()
+                .contains("create_defaults.size must be in the form")
+        );
     }
 
     #[test]
@@ -501,8 +515,9 @@ mod tests {
 
         let err = validate_config(&config).unwrap_err();
         assert!(matches!(err, ConfigError::Invalid(_)));
-        assert!(err
-            .to_string()
-            .contains("payload_limits.max_inline_bytes must be greater than or equal"));
+        assert!(
+            err.to_string()
+                .contains("payload_limits.max_inline_bytes must be greater than or equal")
+        );
     }
 }

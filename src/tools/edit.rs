@@ -49,7 +49,12 @@ pub async fn run(config: &Config, client: &LiteLlmClient, params: ImageParams) -
         }
     };
 
-    super::respond_with_images(images, resolved.format, resolved.save, &config.payload_limits)
+    super::respond_with_images(
+        images,
+        resolved.format,
+        resolved.save,
+        &config.payload_limits,
+    )
 }
 
 #[cfg(test)]
@@ -57,11 +62,11 @@ mod tests {
     use super::*;
     use crate::config::{Format, ImageDefaults, LiteLlmConfig};
 
-     fn sample_config() -> Config {
-         config_for_base_url("http://localhost:4000")
+    fn sample_config() -> Config {
+        config_for_base_url("http://localhost:4000")
     }
 
-     fn config_for_base_url(base_url: &str) -> Config {
+    fn config_for_base_url(base_url: &str) -> Config {
         Config {
             lite_llm: LiteLlmConfig {
                 base_url: base_url.to_string(),
@@ -76,19 +81,19 @@ mod tests {
                 format: Format::Png,
                 save: false,
             },
-             edit_defaults: ImageDefaults {
+            edit_defaults: ImageDefaults {
                 model: "test-model".to_string(),
                 n: 1,
                 size: "1024x1024".to_string(),
                 format: Format::Jpg,
                 save: false,
-             },
-             payload_limits: crate::config::PayloadLimits {
-                 warn_inline_bytes: crate::config::DEFAULT_WARN_INLINE_BYTES,
-                 max_inline_bytes: crate::config::DEFAULT_MAX_INLINE_BYTES,
-             },
-         }
-     }
+            },
+            payload_limits: crate::config::PayloadLimits {
+                warn_inline_bytes: crate::config::DEFAULT_WARN_INLINE_BYTES,
+                max_inline_bytes: crate::config::DEFAULT_MAX_INLINE_BYTES,
+            },
+        }
+    }
 
     fn sample_params(image: Option<Vec<String>>) -> ImageParams {
         ImageParams {
@@ -137,33 +142,33 @@ mod tests {
     }
 
     #[tokio::test]
-     async fn valid_base64_but_empty_decodes_and_is_rejected() {
+    async fn valid_base64_but_empty_decodes_and_is_rejected() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
-         // "" is valid base64 (decodes to empty bytes). This test verifies
-         // the decode path works and that empty decoded bytes are rejected
-         // before hitting the LiteLLM client.
+        // "" is valid base64 (decodes to empty bytes). This test verifies
+        // the decode path works and that empty decoded bytes are rejected
+        // before hitting the LiteLLM client.
         let mock_server = MockServer::start().await;
-         Mock::given(method("POST"))
-             .and(path("/v1/images/edits"))
-             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                 "data": [{ "b64_json": "ZWRpdGVk" }],
-             })))
-             .mount(&mock_server)
-             .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/images/edits"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{ "b64_json": "ZWRpdGVk" }],
+            })))
+            .mount(&mock_server)
+            .await;
 
         let config = config_for_base_url(&mock_server.uri());
         let client = LiteLlmClient::new(&config.lite_llm);
 
-          let params = sample_params(Some(vec!["".to_string()]));
+        let params = sample_params(Some(vec!["".to_string()]));
 
-          let result = run(&config, &client, params).await;
-          assert_eq!(result.is_error, Some(true));
+        let result = run(&config, &client, params).await;
+        assert_eq!(result.is_error, Some(true));
     }
 
     #[tokio::test]
-     async fn empty_image_list_returns_error() {
+    async fn empty_image_list_returns_error() {
         let config = sample_config();
         let client = LiteLlmClient::new(&config.lite_llm);
 
@@ -201,8 +206,7 @@ mod tests {
         // Depending on which image slot fails validation first, this may
         // surface either the empty-bytes error or the invalid-base64 error.
         assert!(
-            text.contains("must not decode to empty bytes")
-                || text.contains("invalid base64"),
+            text.contains("must not decode to empty bytes") || text.contains("invalid base64"),
             "unexpected error text: {text}",
         );
     }

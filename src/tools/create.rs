@@ -24,7 +24,12 @@ pub async fn run(config: &Config, client: &LiteLlmClient, params: ImageParams) -
         }
     };
 
-    super::respond_with_images(images, resolved.format, resolved.save, &config.payload_limits)
+    super::respond_with_images(
+        images,
+        resolved.format,
+        resolved.save,
+        &config.payload_limits,
+    )
 }
 
 #[cfg(test)]

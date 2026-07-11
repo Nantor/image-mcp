@@ -55,9 +55,7 @@ fn matches_expected_format(bytes: &[u8], format: Format) -> bool {
     match format {
         Format::Png => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
         Format::Jpg => bytes.starts_with(b"\xff\xd8\xff"),
-        Format::Webp => {
-            bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP"
-        }
+        Format::Webp => bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP",
     }
 }
 
