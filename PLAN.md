@@ -131,6 +131,24 @@ image-mcp/
 │   └── image_store.rs    # handles `save: true` — writes to disk, returns path
 ```
 
+## Release flow
+
+- `CI` runs on pushes and pull requests targeting `master`, using Rust `1.85.0` for `cargo check`, `cargo test`, `cargo clippy`, and `cargo fmt --check`.
+- `Release` has two entry points:
+  - `workflow_run` after a successful `CI` run on `master`
+  - `push` for tags matching `v*`
+- The `workflow_run` path is tag-creation only:
+  - read the crate version from `Cargo.toml`
+  - create and push tag `v<version>` for the validated commit if that tag does not already exist
+- The tag-push path performs the actual release work:
+  - create the GitHub Release if missing
+  - build release artifacts for all configured targets (`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`)
+  - upload artifacts to the GitHub Release
+- Release uploads are intended to be rerunnable:
+  - existing tags/releases are treated as no-ops
+  - asset uploads use `gh release upload --clobber`
+- The Linux `aarch64-unknown-linux-gnu` release build requires `gcc-aarch64-linux-gnu` as the linker on GitHub-hosted Ubuntu runners.
+
 ## Validated behavior
 
 All items originally flagged for validation during implementation have
