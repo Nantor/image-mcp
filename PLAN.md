@@ -128,6 +128,17 @@ image-mcp/
   form fields for `prompt`/`model`/`n`/`size`/`output_format`, one
   `image[]` file part per input image (multiple parts accepted and
   composited by the model).
-- Verify practical message-size limits for the `image` content block over
+- ~~Verify practical message-size limits for the `image` content block over
   stdio with your actual MCP client, since large `n`/`size` combinations may
-  need `save: true` to avoid oversized JSON-RPC messages.
+  need `save: true` to avoid oversized JSON-RPC messages.~~ Resolved: the
+  `rmcp` stdio transport itself imposes no message-size cap — outgoing
+  messages are written with `JsonRpcMessageCodec::default()`
+  (`max_length: usize::MAX`), and `receive()` reads incoming lines into an
+  unbounded, growable buffer. So any practical limit comes entirely from
+  the MCP client/host on the other end of stdio, which varies and can't be
+  verified from this repo. Real captures under
+  `scripts/http-capture/captures/` show a single 1024x1024 PNG already
+  runs ~2-3 MB base64-encoded, so this scales quickly with `n`. As a
+  mitigation, `respond_with_images` now logs a stderr warning (not an
+  error — the request still succeeds) when the total inline payload
+  exceeds 4 MB, suggesting `save: true` as an alternative.
