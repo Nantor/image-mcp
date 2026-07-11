@@ -3,7 +3,7 @@
 ## Commands
 
 - CI runs, in this order: `cargo check --all --all-targets --all-features`, `cargo test --all`, `cargo clippy --all --all-targets --all-features -- -D warnings`, `cargo fmt --all -- --check`.
-- There is no repo-local `rust-toolchain` file; GitHub Actions installs Rust `1.85.0`. If a local-only failure smells toolchain-related, check `rustc --version` before chasing code issues.
+- `rust-toolchain.toml` pins Rust `1.97.0` (matching `RUST_VERSION` in `.github/workflows/ci.yml`); `rustup` will auto-install it on first use in this directory.
 - Focused test runs use normal Cargo filters, e.g. `cargo test missing_image_parameter_returns_error`.
 
 ## Architecture
@@ -29,5 +29,3 @@
 
 - `PLAN.md` is still the design spec; update it when implementation behavior changes.
 - `scripts/http-capture/create.sh` and `scripts/http-capture/edit.sh` are the fastest way to inspect raw LiteLLM requests without going through MCP. They read the same config file and write captures under `scripts/http-capture/captures/`, which is gitignored.
-</content>
-</invoke>
