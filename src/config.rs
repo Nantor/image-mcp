@@ -19,14 +19,6 @@ impl Format {
             Format::Webp => "webp",
         }
     }
-
-    pub fn mime_type(&self) -> &'static str {
-        match self {
-            Format::Png => "image/png",
-            Format::Jpg => "image/jpeg",
-            Format::Webp => "image/webp",
-        }
-    }
 }
 
 /// Default request timeout (seconds) applied to LiteLLM calls when
@@ -36,17 +28,6 @@ impl Format {
 /// proxy or dead upstream must not block a tool call forever.
 pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 180;
 
-/// Default inline base64 payload size (bytes) above which a warning is
-/// logged. This is used when `payload_limits.warn_inline_bytes` is omitted
-/// from config.
-pub const DEFAULT_WARN_INLINE_BYTES: usize = 4 * 1024 * 1024;
-
-/// Default maximum inline base64 payload size (bytes). Above this, the tool
-/// call fails instead of returning a potentially huge inline image payload
-/// over stdio. This is used when `payload_limits.max_inline_bytes` is omitted
-/// from config.
-pub const DEFAULT_MAX_INLINE_BYTES: usize = 16 * 1024 * 1024;
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct LiteLlmConfig {
     pub base_url: String,
@@ -55,43 +36,6 @@ pub struct LiteLlmConfig {
     /// `DEFAULT_REQUEST_TIMEOUT_SECS` if omitted.
     #[serde(default)]
     pub request_timeout_secs: Option<u64>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct PayloadLimits {
-    /// Total inline base64 payload size (bytes) above which a warning is
-    /// logged. This is a soft limit only; the tool call still succeeds
-    /// unless `max_inline_bytes` is also exceeded.
-    #[serde(default = "default_warn_inline_bytes")]
-    pub warn_inline_bytes: usize,
-
-    /// Hard cap on total inline base64 payload size (bytes). Above this, the
-    /// tool call fails with a clear error instead of returning a huge inline
-    /// payload over stdio.
-    #[serde(default = "default_max_inline_bytes")]
-    pub max_inline_bytes: usize,
-}
-
-/// Note: this manually mirrors the per-field `#[serde(default = ...)]`
-/// functions instead of `#[derive(Default)]`. A derived `Default` would
-/// zero-initialize both `usize` fields, which is exactly wrong here — it's
-/// only used by serde when the entire `payload_limits` object is omitted
-/// from config, and zeroed limits fail `validate_config`'s `> 0` checks.
-impl Default for PayloadLimits {
-    fn default() -> Self {
-        Self {
-            warn_inline_bytes: default_warn_inline_bytes(),
-            max_inline_bytes: default_max_inline_bytes(),
-        }
-    }
-}
-
-fn default_warn_inline_bytes() -> usize {
-    DEFAULT_WARN_INLINE_BYTES
-}
-
-fn default_max_inline_bytes() -> usize {
-    DEFAULT_MAX_INLINE_BYTES
 }
 
 impl LiteLlmConfig {
@@ -109,7 +53,6 @@ pub struct ImageDefaults {
     pub n: u32,
     pub size: String,
     pub format: Format,
-    pub save: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -118,8 +61,6 @@ pub struct Config {
     pub image_models: Vec<String>,
     pub create_defaults: ImageDefaults,
     pub edit_defaults: ImageDefaults,
-    #[serde(default)]
-    pub payload_limits: PayloadLimits,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -173,24 +114,6 @@ pub fn validate_config(config: &Config) -> Result<(), ConfigError> {
         &config.image_models,
     )?;
     validate_image_defaults("edit_defaults", &config.edit_defaults, &config.image_models)?;
-
-    let limits = &config.payload_limits;
-    if limits.warn_inline_bytes == 0 {
-        return Err(ConfigError::Invalid(
-            "payload_limits.warn_inline_bytes must be greater than 0".to_string(),
-        ));
-    }
-    if limits.max_inline_bytes == 0 {
-        return Err(ConfigError::Invalid(
-            "payload_limits.max_inline_bytes must be greater than 0".to_string(),
-        ));
-    }
-    if limits.max_inline_bytes < limits.warn_inline_bytes {
-        return Err(ConfigError::Invalid(
-            "payload_limits.max_inline_bytes must be greater than or equal to warn_inline_bytes"
-                .to_string(),
-        ));
-    }
 
     Ok(())
 }
@@ -276,13 +199,6 @@ mod tests {
     }
 
     #[test]
-    fn format_mime_type() {
-        assert_eq!(Format::Png.mime_type(), "image/png");
-        assert_eq!(Format::Jpg.mime_type(), "image/jpeg");
-        assert_eq!(Format::Webp.mime_type(), "image/webp");
-    }
-
-    #[test]
     fn config_error_no_config_dir() {
         let err = ConfigError::NoConfigDir;
         assert_eq!(err.to_string(), "could not determine config directory");
@@ -328,61 +244,6 @@ mod tests {
     }
 
     #[test]
-    fn payload_limits_defaults_are_sane() {
-        let limits = PayloadLimits {
-            warn_inline_bytes: default_warn_inline_bytes(),
-            max_inline_bytes: default_max_inline_bytes(),
-        };
-        assert!(limits.warn_inline_bytes > 0);
-        assert!(limits.max_inline_bytes >= limits.warn_inline_bytes);
-    }
-
-    /// Regression test: `PayloadLimits::default()` (used by serde when the
-    /// whole `payload_limits` object is missing from config, not when
-    /// individual sub-fields are missing) must produce the same sane
-    /// defaults as the per-field serde defaults, not a derived
-    /// zero-initialized struct.
-    #[test]
-    fn payload_limits_default_impl_matches_documented_defaults() {
-        let limits = PayloadLimits::default();
-        assert_eq!(limits.warn_inline_bytes, DEFAULT_WARN_INLINE_BYTES);
-        assert_eq!(limits.max_inline_bytes, DEFAULT_MAX_INLINE_BYTES);
-        assert!(limits.warn_inline_bytes > 0);
-        assert!(limits.max_inline_bytes > 0);
-    }
-
-    /// Regression test: a config JSON that omits `payload_limits` entirely
-    /// must deserialize to sane, non-zero limits (via `Config`'s
-    /// `#[serde(default)]` falling back to `PayloadLimits::default()`), and
-    /// that result must pass `validate_config`.
-    #[test]
-    fn config_without_payload_limits_section_deserializes_to_sane_defaults() {
-        let json = r#"{
-            "lite_llm": { "base_url": "http://localhost:4000", "api_key": "key" },
-            "image_models": ["gpt-image-1"],
-            "create_defaults": {
-                "model": "gpt-image-1", "n": 1, "size": "1024x1024",
-                "format": "png", "save": false
-            },
-            "edit_defaults": {
-                "model": "gpt-image-1", "n": 1, "size": "1024x1024",
-                "format": "png", "save": false
-            }
-        }"#;
-
-        let config: Config = serde_json::from_str(json).expect("config should deserialize");
-        assert_eq!(
-            config.payload_limits.warn_inline_bytes,
-            DEFAULT_WARN_INLINE_BYTES
-        );
-        assert_eq!(
-            config.payload_limits.max_inline_bytes,
-            DEFAULT_MAX_INLINE_BYTES
-        );
-        validate_config(&config).expect("config with omitted payload_limits should validate");
-    }
-
-    #[test]
     fn load_config_missing_file() {
         // Use a guaranteed non-existent path by temporarily manipulating
         // config_path is hard-coded to dirs::config_dir(), so just pick a
@@ -409,18 +270,12 @@ mod tests {
                 n: 1,
                 size: "1024x1024".to_string(),
                 format: Format::Png,
-                save: false,
             },
             edit_defaults: ImageDefaults {
                 model: "gpt-image-1".to_string(),
                 n: 1,
                 size: "1024x1024".to_string(),
                 format: Format::Jpg,
-                save: false,
-            },
-            payload_limits: PayloadLimits {
-                warn_inline_bytes: default_warn_inline_bytes(),
-                max_inline_bytes: default_max_inline_bytes(),
             },
         };
 
@@ -446,18 +301,12 @@ mod tests {
                 n: 1,
                 size: "1024x1024".to_string(),
                 format: Format::Png,
-                save: false,
             },
             edit_defaults: ImageDefaults {
                 model: "gpt-image-1".to_string(),
                 n: 1,
                 size: "1024x1024".to_string(),
                 format: Format::Jpg,
-                save: false,
-            },
-            payload_limits: PayloadLimits {
-                warn_inline_bytes: default_warn_inline_bytes(),
-                max_inline_bytes: default_max_inline_bytes(),
             },
         };
 
@@ -483,18 +332,12 @@ mod tests {
                 n: 0,
                 size: "1024x1024".to_string(),
                 format: Format::Png,
-                save: false,
             },
             edit_defaults: ImageDefaults {
                 model: "gpt-image-1".to_string(),
                 n: 1,
                 size: "1024x1024".to_string(),
                 format: Format::Jpg,
-                save: false,
-            },
-            payload_limits: PayloadLimits {
-                warn_inline_bytes: default_warn_inline_bytes(),
-                max_inline_bytes: default_max_inline_bytes(),
             },
         };
 
@@ -520,18 +363,12 @@ mod tests {
                 n: 1,
                 size: "not-a-size".to_string(),
                 format: Format::Png,
-                save: false,
             },
             edit_defaults: ImageDefaults {
                 model: "gpt-image-1".to_string(),
                 n: 1,
                 size: "1024x1024".to_string(),
                 format: Format::Jpg,
-                save: false,
-            },
-            payload_limits: PayloadLimits {
-                warn_inline_bytes: default_warn_inline_bytes(),
-                max_inline_bytes: default_max_inline_bytes(),
             },
         };
 
@@ -540,43 +377,6 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("create_defaults.size must be in the form")
-        );
-    }
-
-    #[test]
-    fn validate_config_rejects_invalid_payload_limits() {
-        let config = Config {
-            lite_llm: LiteLlmConfig {
-                base_url: "http://localhost:4000".to_string(),
-                api_key: "key".to_string(),
-                request_timeout_secs: None,
-            },
-            image_models: vec!["gpt-image-1".to_string()],
-            create_defaults: ImageDefaults {
-                model: "gpt-image-1".to_string(),
-                n: 1,
-                size: "1024x1024".to_string(),
-                format: Format::Png,
-                save: false,
-            },
-            edit_defaults: ImageDefaults {
-                model: "gpt-image-1".to_string(),
-                n: 1,
-                size: "1024x1024".to_string(),
-                format: Format::Jpg,
-                save: false,
-            },
-            payload_limits: PayloadLimits {
-                warn_inline_bytes: 10,
-                max_inline_bytes: 5,
-            },
-        };
-
-        let err = validate_config(&config).unwrap_err();
-        assert!(matches!(err, ConfigError::Invalid(_)));
-        assert!(
-            err.to_string()
-                .contains("payload_limits.max_inline_bytes must be greater than or equal")
         );
     }
 }

@@ -26,18 +26,15 @@ struct ImageParams {
     n: Option<u32>,          // falls back to config default per mode
     size: Option<String>,    // e.g. "1024x1024", falls back to config default
     format: Option<Format>,  // png | jpg | webp
-    image: Option<Vec<String>>, // base64 input image(s) — exactly one of `image`/`image_path` required for `edit` (>=1), unused for `create`
-    image_path: Option<Vec<String>>, // on-disk input image path(s), read and base64-encoded internally — exactly one of `image`/`image_path` required for `edit` (>=1), unused for `create`
-    save: Option<bool>,      // true = write to disk & return path, false = inline image content
-    save_path: Option<String>, // optional file or directory path to save to; only used when save resolves to true
+    input_path: Option<Vec<String>>, // on-disk input image path(s), read and base64-encoded internally — required for `edit` (>=1), unused for `create`
+    output_path: String,     // required filesystem path to write the output image(s) to
 }
 ```
 
-- `edit` requires exactly one of `image` or `image_path` (at least one
-  entry); supplying both, or neither, is a validation error surfaced
-  before any network call. `image_path` entries are read from disk with
-  `std::fs::read`; a missing file, unreadable file, or empty file is
-  likewise a validation error.
+- `edit` requires `input_path` (at least one entry); a missing param, or
+  an empty list, is a validation error surfaced before any network call.
+  `input_path` entries are read from disk with `std::fs::read`; a missing
+  file, unreadable file, or empty file is likewise a validation error.
 - `create` → `POST {base_url}/v1/images/generations` (JSON body)
 - `edit` → `POST {base_url}/v1/images/edits` (multipart/form-data: one `image[]` file part per input image, `prompt`/`model` as text fields — per LiteLLM's OpenAPI spec; verified against a live LiteLLM proxy that multiple `image[]` parts in one request let the model compose/reference all of them, e.g. combining a subject from one image with a background from another)
 - `create` explicitly sets `response_format: b64_json` and this is
@@ -52,32 +49,19 @@ struct ImageParams {
 
 ## Response shape
 
-- `save: false` (default) → native MCP `image` content block
-  (`{ type: "image", data: <base64>, mimeType: "image/png" }`)
-- `save: true` → write to disk, return `text` content block with the file path
+Both tools always write their output image(s) to disk and return the
+written filename(s) as `text` content blocks — there is no inline
+base64 image content block.
 
-When `save: true` and `save_path` is omitted, images are written under an
-OS-specific default directory:
+`output_path` is a required, exact destination file path: parent
+directories are created as needed, and the resolved `format`'s extension
+is appended if the path has none.
 
-- **Linux**: `~/Pictures/image-mcp/` (if a Pictures directory is known), else `~/image-mcp/`, else `${TMPDIR}/image-mcp/`.
-- **macOS**: `~/Pictures/image-mcp/` (if a Pictures directory is known), else `~/image-mcp/`, else `${TMPDIR}/image-mcp/`.
-- **Windows**: `%USERPROFILE%\\Pictures\\image-mcp\\` (if a Pictures directory is known), else `%USERPROFILE%\\image-mcp\\`, else the system temp directory `image-mcp\\`.
-
-When `save: true` and `save_path` is set, it overrides the default
-directory:
-
-- If it points to an existing directory, or the string ends in a path
-  separator (`/` or the OS separator), each generated image is written
-  inside that directory with a generated filename (parent directories are
-  created as needed).
-- Otherwise it is treated as an exact destination file path: parent
-  directories are created as needed, and the resolved `format`'s extension
-  is appended if the path has none.
-- With `n > 1` and an exact file-path target, only the first image uses
-  the requested name as-is; subsequent images get a `-<index>` suffix
-  inserted before the extension (e.g. `out.png`, `out-1.png`, `out-2.png`)
-  so a multi-image response never silently overwrites itself.
-- `save_path` has no effect when the resolved `save` is `false`.
+- With `n == 1`, the exact requested path is used as-is.
+- With `n > 1`, every image gets a `-<index>` suffix (1-based) inserted
+  before the extension (e.g. `out.png` becomes `out-1.png`, `out-2.png`,
+  ...), so a multi-image response never silently overwrites itself and
+  filenames are predictable.
 
 ## Config
 
@@ -103,15 +87,13 @@ There are no hardcoded defaults, no auto-creation, and no merging with built-in 
     "model": "gpt-image-1",
     "n": 1,
     "size": "1024x1024",
-    "format": "png",
-    "save": false
+    "format": "png"
   },
   "edit_defaults": {
     "model": "gpt-image-1",
     "n": 1,
     "size": "1024x1024",
-    "format": "png",
-    "save": false
+    "format": "png"
   }
 }
 ```
@@ -152,7 +134,7 @@ image-mcp/
 │   │   ├── create.rs     # `create` tool impl
 │   │   ├── edit.rs       # `edit` tool impl
 │   │   └── list_models.rs
-│   └── image_store.rs    # handles `save: true` — writes to disk (default dir or `save_path`), returns path
+│   └── image_store.rs    # writes decoded images to the exact `output_path`, returns path
 ```
 
 ## Release flow
@@ -187,13 +169,7 @@ been resolved and are covered by tests:
   `prompt`/`model`/`n`/`size`/`output_format`, plus one `image[]` file
   part per input image (multiple parts accepted and composited by the
   model).
-- stdio message-size limits — the `rmcp` stdio transport itself imposes no
-  cap (`JsonRpcMessageCodec::default()` uses `max_length: usize::MAX`, and
-  `receive()` reads into an unbounded, growable buffer). Any practical
-  limit comes from the MCP client/host, which varies and can't be
-  verified from this repo. Real captures under
-  `scripts/http-capture/captures/` show a single 1024x1024 PNG already
-  runs ~2-3 MB base64-encoded, scaling quickly with `n`. As a mitigation,
-  `respond_with_images` logs a stderr warning (not an error) when the
-  total inline payload exceeds 4 MB, suggesting `save: true` as an
-  alternative.
+- stdio message-size limits are no longer a concern for tool responses:
+  both tools always write image data to disk and return only the
+  filename(s) as small text content blocks, never inline base64 image
+  data.

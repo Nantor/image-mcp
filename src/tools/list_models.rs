@@ -28,18 +28,12 @@ mod tests {
                 n: 1,
                 size: "1024x1024".to_string(),
                 format: crate::config::Format::Png,
-                save: false,
             },
             edit_defaults: ImageDefaults {
                 model: "gpt-image-1".to_string(),
                 n: 1,
                 size: "1024x1024".to_string(),
                 format: crate::config::Format::Jpg,
-                save: false,
-            },
-            payload_limits: crate::config::PayloadLimits {
-                warn_inline_bytes: crate::config::DEFAULT_WARN_INLINE_BYTES,
-                max_inline_bytes: crate::config::DEFAULT_MAX_INLINE_BYTES,
             },
         }
     }

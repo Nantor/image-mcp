@@ -24,13 +24,7 @@ pub async fn run(config: &Config, client: &LiteLlmClient, params: ImageParams) -
         }
     };
 
-    super::respond_with_images(
-        images,
-        resolved.format,
-        resolved.save,
-        resolved.save_path.as_deref(),
-        &config.payload_limits,
-    )
+    super::respond_with_images(images, resolved.format, &resolved.output_path)
 }
 
 #[cfg(test)]
@@ -53,33 +47,25 @@ mod tests {
                 n: 1,
                 size: "1024x1024".to_string(),
                 format: Format::Png,
-                save: false,
             },
             edit_defaults: ImageDefaults {
                 model: "test-model".to_string(),
                 n: 1,
                 size: "1024x1024".to_string(),
                 format: Format::Jpg,
-                save: false,
-            },
-            payload_limits: crate::config::PayloadLimits {
-                warn_inline_bytes: crate::config::DEFAULT_WARN_INLINE_BYTES,
-                max_inline_bytes: crate::config::DEFAULT_MAX_INLINE_BYTES,
             },
         }
     }
 
-    fn sample_params(prompt: &str) -> ImageParams {
+    fn sample_params(prompt: &str, output_path: &str) -> ImageParams {
         ImageParams {
             prompt: prompt.to_string(),
             model: None,
             n: None,
             size: None,
             format: None,
-            image: None,
-            image_path: None,
-            save: None,
-            save_path: None,
+            input_path: None,
+            output_path: output_path.to_string(),
         }
     }
 
@@ -88,7 +74,7 @@ mod tests {
         let config = config_for_base_url("http://localhost:4000");
         let client = LiteLlmClient::new(&config.lite_llm);
 
-        let result = run(&config, &client, sample_params("   ")).await;
+        let result = run(&config, &client, sample_params("   ", "/tmp/out.png")).await;
         assert_eq!(result.is_error, Some(true));
 
         let content = &result.content[0];
@@ -104,7 +90,7 @@ mod tests {
         let config = config_for_base_url("http://localhost:4000");
         let client = LiteLlmClient::new(&config.lite_llm);
 
-        let mut params = sample_params("a red bicycle");
+        let mut params = sample_params("a red bicycle", "/tmp/out.png");
         params.size = Some("not-a-size".to_string());
 
         let result = run(&config, &client, params).await;
@@ -116,30 +102,6 @@ mod tests {
             _ => panic!("expected text block"),
         };
         assert!(text.contains("`size`"));
-    }
-
-    #[tokio::test]
-    async fn successful_create_returns_inline_image_block() {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
-
-        let mock_server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/v1/images/generations"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "data": [{ "b64_json": "aGVsbG8=" }],
-            })))
-            .expect(1)
-            .mount(&mock_server)
-            .await;
-
-        let config = config_for_base_url(&mock_server.uri());
-        let client = LiteLlmClient::new(&config.lite_llm);
-
-        let result = run(&config, &client, sample_params("a red bicycle")).await;
-        assert_eq!(result.is_error, Some(false));
-        assert_eq!(result.content.len(), 1);
-        assert!(matches!(result.content[0], ContentBlock::Image(_)));
     }
 
     #[tokio::test]
@@ -158,7 +120,12 @@ mod tests {
         let config = config_for_base_url(&mock_server.uri());
         let client = LiteLlmClient::new(&config.lite_llm);
 
-        let result = run(&config, &client, sample_params("a red bicycle")).await;
+        let result = run(
+            &config,
+            &client,
+            sample_params("a red bicycle", "/tmp/out.png"),
+        )
+        .await;
         assert_eq!(result.is_error, Some(true));
 
         let content = &result.content[0];
@@ -170,45 +137,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn successful_create_with_save_writes_file() {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
-
-        let mock_server = MockServer::start().await;
-        // Minimal valid PNG header plus payload, encoded as base64 so the
-        // image_store format check passes.
-        let mut png_bytes = b"\x89PNG\r\n\x1a\n".to_vec();
-        png_bytes.extend_from_slice(b"rest-of-file");
-        let png_b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
-
-        Mock::given(method("POST"))
-            .and(path("/v1/images/generations"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "data": [{ "b64_json": png_b64 }],
-            })))
-            .expect(1)
-            .mount(&mock_server)
-            .await;
-
-        let config = config_for_base_url(&mock_server.uri());
-        let client = LiteLlmClient::new(&config.lite_llm);
-
-        let mut params = sample_params("a red bicycle");
-        params.save = Some(true);
-
-        let result = run(&config, &client, params).await;
-        assert_eq!(result.is_error, Some(false));
-        assert_eq!(result.content.len(), 1);
-        let path = match &result.content[0] {
-            ContentBlock::Text(t) => t.text.clone(),
-            _ => panic!("expected text block"),
-        };
-        assert!(path.ends_with(".png"));
-        std::fs::remove_file(&path).ok();
-    }
-
-    #[tokio::test]
-    async fn successful_create_with_save_path_writes_to_requested_file() {
+    async fn successful_create_writes_to_output_path() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -232,9 +161,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
         let target = dir.join("bicycle.png");
 
-        let mut params = sample_params("a red bicycle");
-        params.save = Some(true);
-        params.save_path = Some(target.display().to_string());
+        let params = sample_params("a red bicycle", &target.display().to_string());
 
         let result = run(&config, &client, params).await;
         assert_eq!(result.is_error, Some(false));

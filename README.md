@@ -7,7 +7,7 @@ An MCP (Model Context Protocol) server for image generation and editing powered 
 - **Create** - Generate images from text prompts
 - **Edit** - Edit existing images using natural language
 - **List Models** - Query available image models from configuration
-- **save_path** - Optionally save generated images to a specific file or directory path
+- **output_path** - Always writes generated images to a filesystem path you specify
 
 ## Installation
 
@@ -37,15 +37,13 @@ Example `config.json`:
     "model": "gpt-image-1",
     "n": 1,
     "size": "1024x1024",
-    "format": "png",
-    "save": false
+    "format": "png"
   },
   "edit_defaults": {
     "model": "gpt-image-1",
     "n": 1,
     "size": "1024x1024",
-    "format": "png",
-    "save": false
+    "format": "png"
   }
 }
 ```
@@ -57,46 +55,33 @@ Notes:
 
 ## Editing images
 
-`edit` requires exactly one of two ways to supply input image(s) — not
-both:
-
-- `image` — one or more base64-encoded images.
-- `image_path` — one or more filesystem paths to image files, read from
-  disk.
-
-Either accepts multiple entries, letting the model compose/reference all
-of them in a single edit (e.g. combining a subject from one image with a
-background from another). Supplying both `image` and `image_path`, or
-neither, is a validation error.
-
-Example tool calls:
-
-```jsonc
-{ "prompt": "add a hat", "image": ["<base64...>"] }
-{ "prompt": "add a hat", "image_path": ["/home/me/Pictures/photo.png"] }
-```
-
-## Saving images to disk
-
-Both `create` and `edit` accept a `save` flag (falls back to the
-configured `save` default) and an optional `save_path` string used only
-when the resolved `save` is `true`:
-
-- Omit `save_path` to write under the default directory
-  (`~/Pictures/image-mcp/`, falling back to `~/image-mcp/` or the system
-  temp directory).
-- Pass a directory path (existing, or ending in `/`) to write each
-  generated image inside it with a generated filename.
-- Pass an exact file path (e.g. `/tmp/out.png`) to write to that exact
-  location; the configured/requested format's extension is appended if
-  omitted. Parent directories are created as needed. If `n > 1` produces
-  multiple images, only the first uses the exact name — subsequent images
-  get a `-1`, `-2`, ... suffix before the extension.
+`edit` requires `input_path` — one or more filesystem paths to image
+files, read from disk. Multiple entries let the model compose/reference
+all of them in a single edit (e.g. combining a subject from one image
+with a background from another). A missing or empty `input_path` is a
+validation error.
 
 Example tool call:
 
 ```jsonc
-{ "prompt": "a red bicycle", "save": true, "save_path": "/home/me/Pictures/bicycle.png" }
+{ "prompt": "add a hat", "input_path": ["/home/me/Pictures/photo.png"], "output_path": "/home/me/Pictures/photo-with-hat.png" }
+```
+
+## Writing images to disk
+
+Both `create` and `edit` require an `output_path` string: an exact
+destination file path. Parent directories are created as needed, and the
+configured/requested format's extension is appended if the path has none.
+
+If `n > 1` produces multiple images, every image gets a `-1`, `-2`, ...
+suffix inserted before the extension (e.g. `out.png` becomes `out-1.png`,
+`out-2.png`, ...); with exactly one image, the exact requested path is
+used as-is.
+
+Example tool call:
+
+```jsonc
+{ "prompt": "a red bicycle", "output_path": "/home/me/Pictures/bicycle.png" }
 ```
 
 ## Building & Testing

@@ -286,8 +286,7 @@ mod integration_tests {
             n: 1,
             size: "1024x1024".to_string(),
             format: Format::Png,
-            save: false,
-            save_path: None,
+            output_path: std::path::PathBuf::from("/tmp/out.png"),
         }
     }
 

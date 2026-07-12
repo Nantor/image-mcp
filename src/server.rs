@@ -36,7 +36,7 @@ impl ImageMcpServer {
     }
 
     #[tool(
-        description = "Edit one or more images using a natural-language prompt. Requires at least one input image, provided as either base64-encoded `image` or on-disk `image_path` (exactly one of the two — not both); when multiple are given, the model can compose/reference all of them (e.g. combining a subject from one image with a background from another). There is no mask/inpainting support — describe the desired edit in `prompt`."
+        description = "Edit one or more images using a natural-language prompt. Requires at least one input image, provided as an on-disk `input_path`; when multiple are given, the model can compose/reference all of them (e.g. combining a subject from one image with a background from another). There is no mask/inpainting support — describe the desired edit in `prompt`."
     )]
     async fn edit(
         &self,
@@ -82,18 +82,12 @@ mod tests {
                 n: 1,
                 size: "1024x1024".to_string(),
                 format: Format::Png,
-                save: false,
             },
             edit_defaults: ImageDefaults {
                 model: "gpt-image-1".to_string(),
                 n: 1,
                 size: "1024x1024".to_string(),
                 format: Format::Jpg,
-                save: false,
-            },
-            payload_limits: crate::config::PayloadLimits {
-                warn_inline_bytes: crate::config::DEFAULT_WARN_INLINE_BYTES,
-                max_inline_bytes: crate::config::DEFAULT_MAX_INLINE_BYTES,
             },
         }
     }
@@ -140,10 +134,8 @@ mod tests {
             n: None,
             size: None,
             format: None,
-            image: None,
-            image_path: None,
-            save: None,
-            save_path: None,
+            input_path: None,
+            output_path: "/tmp/out.png".to_string(),
         });
 
         let result = server
@@ -162,10 +154,8 @@ mod tests {
             n: None,
             size: None,
             format: None,
-            image: None,
-            image_path: None,
-            save: None,
-            save_path: None,
+            input_path: None,
+            output_path: "/tmp/out.png".to_string(),
         });
 
         let result = server
