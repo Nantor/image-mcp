@@ -36,7 +36,7 @@ impl ImageMcpServer {
     }
 
     #[tool(
-        description = "Edit one or more images using a natural-language prompt. Requires at least one base64-encoded input `image`; when multiple are given, the model can compose/reference all of them (e.g. combining a subject from one image with a background from another). There is no mask/inpainting support — describe the desired edit in `prompt`."
+        description = "Edit one or more images using a natural-language prompt. Requires at least one input image, provided as either base64-encoded `image` or on-disk `image_path` (exactly one of the two — not both); when multiple are given, the model can compose/reference all of them (e.g. combining a subject from one image with a background from another). There is no mask/inpainting support — describe the desired edit in `prompt`."
     )]
     async fn edit(
         &self,
@@ -141,6 +141,7 @@ mod tests {
             size: None,
             format: None,
             image: None,
+            image_path: None,
             save: None,
             save_path: None,
         });
@@ -162,6 +163,7 @@ mod tests {
             size: None,
             format: None,
             image: None,
+            image_path: None,
             save: None,
             save_path: None,
         });

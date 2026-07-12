@@ -7,34 +7,68 @@ use crate::litellm::LiteLlmClient;
 use super::ImageParams;
 
 /// Runs the `edit` (prompt-driven image editing) tool: resolves params
-/// against `edit_defaults`, decodes the required input `image`(s), calls
-/// LiteLLM's `/v1/images/edits`, and returns either an inline image block or
-/// a saved file path per `save`.
+/// against `edit_defaults`, decodes the required input image(s) — from
+/// either base64 `image` or on-disk `image_path` (exactly one of the two
+/// must be set) — calls LiteLLM's `/v1/images/edits`, and returns either an
+/// inline image block or a saved file path per `save`.
 pub async fn run(config: &Config, client: &LiteLlmClient, params: ImageParams) -> CallToolResult {
-    let Some(image_b64s) = params.image.clone().filter(|images| !images.is_empty()) else {
-        return CallToolResult::error(vec![ContentBlock::text(
-            "edit requires an `image` parameter (at least one base64-encoded input image)",
-        )]);
-    };
+    let has_image = params.image.as_ref().is_some_and(|v| !v.is_empty());
+    let has_image_path = params.image_path.as_ref().is_some_and(|v| !v.is_empty());
 
-    let mut image_bytes_list = Vec::with_capacity(image_b64s.len());
-    for image_b64 in &image_b64s {
-        match base64::engine::general_purpose::STANDARD.decode(image_b64) {
-            Ok(bytes) => {
-                if bytes.is_empty() {
-                    return CallToolResult::error(vec![ContentBlock::text(
-                        "`image` parameter must not decode to empty bytes; provide a valid base64-encoded image",
-                    )]);
+    if has_image && has_image_path {
+        return CallToolResult::error(vec![ContentBlock::text(
+            "edit accepts either `image` or `image_path`, not both — provide exactly one",
+        )]);
+    }
+
+    let image_bytes_list = if has_image_path {
+        let paths = params.image_path.clone().unwrap_or_default();
+        let mut bytes_list = Vec::with_capacity(paths.len());
+        for path in &paths {
+            match std::fs::read(path) {
+                Ok(bytes) => {
+                    if bytes.is_empty() {
+                        return CallToolResult::error(vec![ContentBlock::text(format!(
+                            "`image_path` entry {path:?} is empty; provide a valid image file"
+                        ))]);
+                    }
+                    bytes_list.push(bytes);
                 }
-                image_bytes_list.push(bytes);
-            }
-            Err(err) => {
-                return CallToolResult::error(vec![ContentBlock::text(format!(
-                    "invalid base64 in `image` parameter: {err}"
-                ))]);
+                Err(err) => {
+                    return CallToolResult::error(vec![ContentBlock::text(format!(
+                        "failed to read `image_path` entry {path:?}: {err}"
+                    ))]);
+                }
             }
         }
-    }
+        bytes_list
+    } else if has_image {
+        let image_b64s = params.image.clone().unwrap_or_default();
+        let mut bytes_list = Vec::with_capacity(image_b64s.len());
+        for image_b64 in &image_b64s {
+            match base64::engine::general_purpose::STANDARD.decode(image_b64) {
+                Ok(bytes) => {
+                    if bytes.is_empty() {
+                        return CallToolResult::error(vec![ContentBlock::text(
+                            "`image` parameter must not decode to empty bytes; provide a valid base64-encoded image",
+                        )]);
+                    }
+                    bytes_list.push(bytes);
+                }
+                Err(err) => {
+                    return CallToolResult::error(vec![ContentBlock::text(format!(
+                        "invalid base64 in `image` parameter: {err}"
+                    ))]);
+                }
+            }
+        }
+        bytes_list
+    } else {
+        return CallToolResult::error(vec![ContentBlock::text(
+            "edit requires either an `image` parameter (at least one base64-encoded input image) \
+             or an `image_path` parameter (at least one path to an input image file)",
+        )]);
+    };
 
     let resolved = params.resolve(&config.edit_defaults);
 
@@ -104,6 +138,7 @@ mod tests {
             size: None,
             format: None,
             image,
+            image_path: None,
             save: None,
             save_path: None,
         }
@@ -122,7 +157,7 @@ mod tests {
             ContentBlock::Text(t) => t.text.clone(),
             _ => panic!("expected text block"),
         };
-        assert!(text.contains("edit requires an `image` parameter"));
+        assert!(text.contains("edit requires either an `image` parameter"));
     }
 
     #[tokio::test]
@@ -184,7 +219,7 @@ mod tests {
             ContentBlock::Text(t) => t.text.clone(),
             _ => panic!("expected text block"),
         };
-        assert!(text.contains("edit requires an `image` parameter"));
+        assert!(text.contains("edit requires either an `image` parameter"));
     }
 
     #[tokio::test]
@@ -285,6 +320,165 @@ mod tests {
             _ => panic!("expected text block"),
         };
         assert!(text.contains("edit failed"));
+    }
+
+    #[tokio::test]
+    async fn both_image_and_image_path_returns_error() {
+        let config = sample_config();
+        let client = LiteLlmClient::new(&config.lite_llm);
+
+        let mut params = sample_params(Some(vec!["aGVsbG8=".to_string()]));
+        params.image_path = Some(vec!["/tmp/whatever.png".to_string()]);
+
+        let result = run(&config, &client, params).await;
+        assert_eq!(result.is_error, Some(true));
+
+        let content = &result.content[0];
+        let text = match content {
+            ContentBlock::Text(t) => t.text.clone(),
+            _ => panic!("expected text block"),
+        };
+        assert!(text.contains("either `image` or `image_path`"));
+    }
+
+    #[tokio::test]
+    async fn image_path_nonexistent_file_returns_error() {
+        let config = sample_config();
+        let client = LiteLlmClient::new(&config.lite_llm);
+
+        let mut params = sample_params(None);
+        params.image_path = Some(vec![
+            "/tmp/definitely-does-not-exist-image-mcp.png".to_string(),
+        ]);
+
+        let result = run(&config, &client, params).await;
+        assert_eq!(result.is_error, Some(true));
+
+        let content = &result.content[0];
+        let text = match content {
+            ContentBlock::Text(t) => t.text.clone(),
+            _ => panic!("expected text block"),
+        };
+        assert!(text.contains("failed to read `image_path` entry"));
+    }
+
+    #[tokio::test]
+    async fn image_path_empty_file_returns_error() {
+        let config = sample_config();
+        let client = LiteLlmClient::new(&config.lite_llm);
+
+        let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        let file = dir.join("empty.png");
+        std::fs::write(&file, b"").expect("write empty file");
+
+        let mut params = sample_params(None);
+        params.image_path = Some(vec![file.display().to_string()]);
+
+        let result = run(&config, &client, params).await;
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(result.is_error, Some(true));
+        let content = &result.content[0];
+        let text = match content {
+            ContentBlock::Text(t) => t.text.clone(),
+            _ => panic!("expected text block"),
+        };
+        assert!(text.contains("is empty"));
+    }
+
+    #[tokio::test]
+    async fn empty_image_path_list_returns_error() {
+        let config = sample_config();
+        let client = LiteLlmClient::new(&config.lite_llm);
+
+        let mut params = sample_params(None);
+        params.image_path = Some(vec![]);
+
+        let result = run(&config, &client, params).await;
+        assert_eq!(result.is_error, Some(true));
+
+        let content = &result.content[0];
+        let text = match content {
+            ContentBlock::Text(t) => t.text.clone(),
+            _ => panic!("expected text block"),
+        };
+        assert!(text.contains("edit requires either an `image` parameter"));
+    }
+
+    #[tokio::test]
+    async fn successful_edit_with_image_path_returns_inline_image_block() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/images/edits"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{ "b64_json": "ZWRpdGVk" }],
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = config_for_base_url(&mock_server.uri());
+        let client = LiteLlmClient::new(&config.lite_llm);
+
+        let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        let file = dir.join("input.png");
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend_from_slice(b"rest-of-file");
+        std::fs::write(&file, &bytes).expect("write input file");
+
+        let mut params = sample_params(None);
+        params.image_path = Some(vec![file.display().to_string()]);
+
+        let result = run(&config, &client, params).await;
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(result.is_error, Some(false));
+        assert_eq!(result.content.len(), 1);
+        assert!(matches!(result.content[0], ContentBlock::Image(_)));
+    }
+
+    #[tokio::test]
+    async fn successful_edit_with_multiple_image_paths_sends_all_images() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/images/edits"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{ "b64_json": "ZWRpdGVk" }],
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = config_for_base_url(&mock_server.uri());
+        let client = LiteLlmClient::new(&config.lite_llm);
+
+        let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        let mut paths = Vec::new();
+        for name in ["a.png", "b.png"] {
+            let file = dir.join(name);
+            let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+            bytes.extend_from_slice(b"rest-of-file");
+            std::fs::write(&file, &bytes).expect("write input file");
+            paths.push(file.display().to_string());
+        }
+
+        let mut params = sample_params(None);
+        params.image_path = Some(paths);
+
+        let result = run(&config, &client, params).await;
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(result.is_error, Some(false));
+        assert_eq!(result.content.len(), 1);
     }
 
     #[test]

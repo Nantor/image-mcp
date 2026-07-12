@@ -55,6 +55,27 @@ Notes:
 - The file must exist and be valid JSONC (comments allowed) on startup.
 - Missing or invalid config terminates the process at startup with a clear stderr error.
 
+## Editing images
+
+`edit` requires exactly one of two ways to supply input image(s) — not
+both:
+
+- `image` — one or more base64-encoded images.
+- `image_path` — one or more filesystem paths to image files, read from
+  disk.
+
+Either accepts multiple entries, letting the model compose/reference all
+of them in a single edit (e.g. combining a subject from one image with a
+background from another). Supplying both `image` and `image_path`, or
+neither, is a validation error.
+
+Example tool calls:
+
+```jsonc
+{ "prompt": "add a hat", "image": ["<base64...>"] }
+{ "prompt": "add a hat", "image_path": ["/home/me/Pictures/photo.png"] }
+```
+
 ## Saving images to disk
 
 Both `create` and `edit` accept a `save` flag (falls back to the

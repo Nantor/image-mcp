@@ -77,6 +77,7 @@ mod tests {
             size: None,
             format: None,
             image: None,
+            image_path: None,
             save: None,
             save_path: None,
         }

@@ -26,11 +26,17 @@ pub struct ImageParams {
     pub size: Option<String>,
     /// Output image format. Falls back to the configured default.
     pub format: Option<Format>,
-    /// Base64-encoded input image(s). Required for `edit` (at least one),
-    /// unused for `create`. Multiple images are sent as separate `image[]`
-    /// parts to LiteLLM, letting the model compose/reference all of them
-    /// in a single edit (e.g. "put subject A onto subject B's background").
+    /// Base64-encoded input image(s). Exactly one of `image` or
+    /// `image_path` is required for `edit` (at least one entry); unused
+    /// for `create`. Multiple images are sent as separate `image[]` parts
+    /// to LiteLLM, letting the model compose/reference all of them in a
+    /// single edit (e.g. "put subject A onto subject B's background").
     pub image: Option<Vec<String>>,
+    /// Filesystem path(s) to input image(s), read from disk. Exactly one
+    /// of `image` or `image_path` is required for `edit` (at least one
+    /// entry); unused for `create`. Cannot be combined with `image` in the
+    /// same call — pick one or the other.
+    pub image_path: Option<Vec<String>>,
     /// If true, write the image to disk and return its path instead of an
     /// inline image content block. Falls back to the configured default.
     pub save: Option<bool>,
@@ -217,6 +223,7 @@ mod tests {
             size: None,
             format: None,
             image: None,
+            image_path: None,
             save: None,
             save_path: None,
         };
@@ -240,6 +247,7 @@ mod tests {
             size: Some("2048x2048".to_string()),
             format: Some(Format::Jpg),
             image: None,
+            image_path: None,
             save: Some(true),
             save_path: None,
         };
@@ -263,6 +271,7 @@ mod tests {
             size: None,
             format: Some(Format::Webp),
             image: None,
+            image_path: None,
             save: None,
             save_path: None,
         };
@@ -292,6 +301,7 @@ mod tests {
             size: None,
             format: None,
             image: None,
+            image_path: None,
             save: None,
             save_path: None,
         };
@@ -508,6 +518,7 @@ mod tests {
             size: None,
             format: None,
             image: None,
+            image_path: None,
             save: Some(true),
             save_path: Some("/tmp/out.png".to_string()),
         };
@@ -524,6 +535,7 @@ mod tests {
             size: None,
             format: None,
             image: None,
+            image_path: None,
             save: None,
             save_path: None,
         };

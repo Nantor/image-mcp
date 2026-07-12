@@ -26,12 +26,18 @@ struct ImageParams {
     n: Option<u32>,          // falls back to config default per mode
     size: Option<String>,    // e.g. "1024x1024", falls back to config default
     format: Option<Format>,  // png | jpg | webp
-    image: Option<Vec<String>>, // base64 input image(s) — required for `edit` (>=1), unused for `create`
+    image: Option<Vec<String>>, // base64 input image(s) — exactly one of `image`/`image_path` required for `edit` (>=1), unused for `create`
+    image_path: Option<Vec<String>>, // on-disk input image path(s), read and base64-encoded internally — exactly one of `image`/`image_path` required for `edit` (>=1), unused for `create`
     save: Option<bool>,      // true = write to disk & return path, false = inline image content
     save_path: Option<String>, // optional file or directory path to save to; only used when save resolves to true
 }
 ```
 
+- `edit` requires exactly one of `image` or `image_path` (at least one
+  entry); supplying both, or neither, is a validation error surfaced
+  before any network call. `image_path` entries are read from disk with
+  `std::fs::read`; a missing file, unreadable file, or empty file is
+  likewise a validation error.
 - `create` → `POST {base_url}/v1/images/generations` (JSON body)
 - `edit` → `POST {base_url}/v1/images/edits` (multipart/form-data: one `image[]` file part per input image, `prompt`/`model` as text fields — per LiteLLM's OpenAPI spec; verified against a live LiteLLM proxy that multiple `image[]` parts in one request let the model compose/reference all of them, e.g. combining a subject from one image with a background from another)
 - `create` explicitly sets `response_format: b64_json` and this is
