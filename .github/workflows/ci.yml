@@ -16,7 +16,7 @@ jobs:
     name: Check, test, clippy, fmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         run: |
@@ -29,19 +29,19 @@ jobs:
           cargo --version
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ env.RUST_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Cache cargo index
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/git
           key: ${{ runner.os }}-cargo-index-${{ env.RUST_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Cache build artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: target
           key: ${{ runner.os }}-cargo-target-${{ env.RUST_VERSION }}-${{ hashFiles('**/Cargo.lock') }}

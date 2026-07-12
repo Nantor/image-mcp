@@ -26,7 +26,7 @@ jobs:
       tag: ${{ steps.resolve.outputs.tag }}
       should_release: ${{ steps.resolve.outputs.should_release }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
           fetch-depth: 0
@@ -110,7 +110,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.should_release == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.ref }}
 
@@ -158,7 +158,7 @@ jobs:
             archive: zip
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.ref }}
 
@@ -177,13 +177,13 @@ jobs:
           rustc --version
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ env.RUST_VERSION }}-${{ hashFiles('**/Cargo.lock') }}-${{ matrix.target }}
 
       - name: Cache cargo index
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/git
           key: ${{ runner.os }}-cargo-index-${{ env.RUST_VERSION }}-${{ hashFiles('**/Cargo.lock') }}-${{ matrix.target }}
