@@ -142,6 +142,7 @@ mod tests {
             format: None,
             image: None,
             save: None,
+            save_path: None,
         });
 
         let result = server
@@ -162,6 +163,7 @@ mod tests {
             format: None,
             image: None,
             save: None,
+            save_path: None,
         });
 
         let result = server

@@ -53,6 +53,7 @@ pub async fn run(config: &Config, client: &LiteLlmClient, params: ImageParams) -
         images,
         resolved.format,
         resolved.save,
+        resolved.save_path.as_deref(),
         &config.payload_limits,
     )
 }
@@ -104,6 +105,7 @@ mod tests {
             format: None,
             image,
             save: None,
+            save_path: None,
         }
     }
 

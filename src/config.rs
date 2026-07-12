@@ -57,7 +57,7 @@ pub struct LiteLlmConfig {
     pub request_timeout_secs: Option<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct PayloadLimits {
     /// Total inline base64 payload size (bytes) above which a warning is
     /// logged. This is a soft limit only; the tool call still succeeds
@@ -70,6 +70,20 @@ pub struct PayloadLimits {
     /// payload over stdio.
     #[serde(default = "default_max_inline_bytes")]
     pub max_inline_bytes: usize,
+}
+
+/// Note: this manually mirrors the per-field `#[serde(default = ...)]`
+/// functions instead of `#[derive(Default)]`. A derived `Default` would
+/// zero-initialize both `usize` fields, which is exactly wrong here — it's
+/// only used by serde when the entire `payload_limits` object is omitted
+/// from config, and zeroed limits fail `validate_config`'s `> 0` checks.
+impl Default for PayloadLimits {
+    fn default() -> Self {
+        Self {
+            warn_inline_bytes: default_warn_inline_bytes(),
+            max_inline_bytes: default_max_inline_bytes(),
+        }
+    }
 }
 
 fn default_warn_inline_bytes() -> usize {
@@ -321,6 +335,51 @@ mod tests {
         };
         assert!(limits.warn_inline_bytes > 0);
         assert!(limits.max_inline_bytes >= limits.warn_inline_bytes);
+    }
+
+    /// Regression test: `PayloadLimits::default()` (used by serde when the
+    /// whole `payload_limits` object is missing from config, not when
+    /// individual sub-fields are missing) must produce the same sane
+    /// defaults as the per-field serde defaults, not a derived
+    /// zero-initialized struct.
+    #[test]
+    fn payload_limits_default_impl_matches_documented_defaults() {
+        let limits = PayloadLimits::default();
+        assert_eq!(limits.warn_inline_bytes, DEFAULT_WARN_INLINE_BYTES);
+        assert_eq!(limits.max_inline_bytes, DEFAULT_MAX_INLINE_BYTES);
+        assert!(limits.warn_inline_bytes > 0);
+        assert!(limits.max_inline_bytes > 0);
+    }
+
+    /// Regression test: a config JSON that omits `payload_limits` entirely
+    /// must deserialize to sane, non-zero limits (via `Config`'s
+    /// `#[serde(default)]` falling back to `PayloadLimits::default()`), and
+    /// that result must pass `validate_config`.
+    #[test]
+    fn config_without_payload_limits_section_deserializes_to_sane_defaults() {
+        let json = r#"{
+            "lite_llm": { "base_url": "http://localhost:4000", "api_key": "key" },
+            "image_models": ["gpt-image-1"],
+            "create_defaults": {
+                "model": "gpt-image-1", "n": 1, "size": "1024x1024",
+                "format": "png", "save": false
+            },
+            "edit_defaults": {
+                "model": "gpt-image-1", "n": 1, "size": "1024x1024",
+                "format": "png", "save": false
+            }
+        }"#;
+
+        let config: Config = serde_json::from_str(json).expect("config should deserialize");
+        assert_eq!(
+            config.payload_limits.warn_inline_bytes,
+            DEFAULT_WARN_INLINE_BYTES
+        );
+        assert_eq!(
+            config.payload_limits.max_inline_bytes,
+            DEFAULT_MAX_INLINE_BYTES
+        );
+        validate_config(&config).expect("config with omitted payload_limits should validate");
     }
 
     #[test]

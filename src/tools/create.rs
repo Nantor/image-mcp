@@ -28,6 +28,7 @@ pub async fn run(config: &Config, client: &LiteLlmClient, params: ImageParams) -
         images,
         resolved.format,
         resolved.save,
+        resolved.save_path.as_deref(),
         &config.payload_limits,
     )
 }
@@ -77,6 +78,7 @@ mod tests {
             format: None,
             image: None,
             save: None,
+            save_path: None,
         }
     }
 
@@ -202,5 +204,45 @@ mod tests {
         };
         assert!(path.ends_with(".png"));
         std::fs::remove_file(&path).ok();
+    }
+
+    #[tokio::test]
+    async fn successful_create_with_save_path_writes_to_requested_file() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        let mut png_bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        png_bytes.extend_from_slice(b"rest-of-file");
+        let png_b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+
+        Mock::given(method("POST"))
+            .and(path("/v1/images/generations"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{ "b64_json": png_b64 }],
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = config_for_base_url(&mock_server.uri());
+        let client = LiteLlmClient::new(&config.lite_llm);
+
+        let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
+        let target = dir.join("bicycle.png");
+
+        let mut params = sample_params("a red bicycle");
+        params.save = Some(true);
+        params.save_path = Some(target.display().to_string());
+
+        let result = run(&config, &client, params).await;
+        assert_eq!(result.is_error, Some(false));
+        assert_eq!(result.content.len(), 1);
+        let path = match &result.content[0] {
+            ContentBlock::Text(t) => t.text.clone(),
+            _ => panic!("expected text block"),
+        };
+        assert_eq!(std::path::PathBuf::from(&path), target);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

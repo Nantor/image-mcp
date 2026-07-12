@@ -28,6 +28,7 @@ struct ImageParams {
     format: Option<Format>,  // png | jpg | webp
     image: Option<Vec<String>>, // base64 input image(s) — required for `edit` (>=1), unused for `create`
     save: Option<bool>,      // true = write to disk & return path, false = inline image content
+    save_path: Option<String>, // optional file or directory path to save to; only used when save resolves to true
 }
 ```
 
@@ -49,11 +50,28 @@ struct ImageParams {
   (`{ type: "image", data: <base64>, mimeType: "image/png" }`)
 - `save: true` → write to disk, return `text` content block with the file path
 
-When `save: true`, images are written under an OS-specific directory:
+When `save: true` and `save_path` is omitted, images are written under an
+OS-specific default directory:
 
 - **Linux**: `~/Pictures/image-mcp/` (if a Pictures directory is known), else `~/image-mcp/`, else `${TMPDIR}/image-mcp/`.
 - **macOS**: `~/Pictures/image-mcp/` (if a Pictures directory is known), else `~/image-mcp/`, else `${TMPDIR}/image-mcp/`.
 - **Windows**: `%USERPROFILE%\\Pictures\\image-mcp\\` (if a Pictures directory is known), else `%USERPROFILE%\\image-mcp\\`, else the system temp directory `image-mcp\\`.
+
+When `save: true` and `save_path` is set, it overrides the default
+directory:
+
+- If it points to an existing directory, or the string ends in a path
+  separator (`/` or the OS separator), each generated image is written
+  inside that directory with a generated filename (parent directories are
+  created as needed).
+- Otherwise it is treated as an exact destination file path: parent
+  directories are created as needed, and the resolved `format`'s extension
+  is appended if the path has none.
+- With `n > 1` and an exact file-path target, only the first image uses
+  the requested name as-is; subsequent images get a `-<index>` suffix
+  inserted before the extension (e.g. `out.png`, `out-1.png`, `out-2.png`)
+  so a multi-image response never silently overwrites itself.
+- `save_path` has no effect when the resolved `save` is `false`.
 
 ## Config
 
@@ -128,7 +146,7 @@ image-mcp/
 │   │   ├── create.rs     # `create` tool impl
 │   │   ├── edit.rs       # `edit` tool impl
 │   │   └── list_models.rs
-│   └── image_store.rs    # handles `save: true` — writes to disk, returns path
+│   └── image_store.rs    # handles `save: true` — writes to disk (default dir or `save_path`), returns path
 ```
 
 ## Release flow

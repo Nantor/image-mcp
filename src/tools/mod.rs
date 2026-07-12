@@ -2,6 +2,8 @@ pub mod create;
 pub mod edit;
 pub mod list_models;
 
+use std::path::{Path, PathBuf};
+
 use rmcp::model::{CallToolResult, ContentBlock};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -32,6 +34,16 @@ pub struct ImageParams {
     /// If true, write the image to disk and return its path instead of an
     /// inline image content block. Falls back to the configured default.
     pub save: Option<bool>,
+    /// Optional file or directory path to save the generated image(s) to.
+    /// Only used when the effective `save` value is true. If it points to
+    /// an existing directory (or ends with a path separator), each image is
+    /// written inside it with a generated filename; otherwise it is treated
+    /// as an exact destination file path (the format's extension is
+    /// appended if missing). With multiple images and a file-path target,
+    /// only the first image uses the exact name; subsequent images get a
+    /// numeric suffix. If omitted, falls back to the default save
+    /// directory (e.g. `~/Pictures/image-mcp/`).
+    pub save_path: Option<String>,
 }
 
 /// `ImageParams` merged with the mode's config defaults — every field is
@@ -43,6 +55,7 @@ pub struct ResolvedParams {
     pub size: String,
     pub format: Format,
     pub save: bool,
+    pub save_path: Option<PathBuf>,
 }
 
 impl ImageParams {
@@ -54,6 +67,7 @@ impl ImageParams {
             size: self.size.unwrap_or_else(|| defaults.size.clone()),
             format: self.format.unwrap_or(defaults.format),
             save: self.save.unwrap_or(defaults.save),
+            save_path: self.save_path.map(PathBuf::from),
         }
     }
 }
@@ -74,6 +88,11 @@ impl ResolvedParams {
                 "`size` must be in the form WIDTHxHEIGHT (e.g. \"1024x1024\"), got {:?}",
                 self.size
             ));
+        }
+        if let Some(path) = &self.save_path
+            && path.as_os_str().is_empty()
+        {
+            return Err("`save_path` must not be empty".to_string());
         }
         Ok(())
     }
@@ -97,10 +116,17 @@ fn is_valid_size(size: &str) -> bool {
 /// Shared response handling for `create` and `edit`: either writes each
 /// image to disk and returns its path as text, or returns it inline as an
 /// MCP `image` content block, depending on `save`.
+///
+/// `save_path`, when `save` is true, is resolved per-image: a directory
+/// target gets each image written inside it with a generated filename; an
+/// exact file-path target is used as-is for the first image, and gets a
+/// numeric suffix inserted before the extension for any subsequent images
+/// (so a multi-image response never silently overwrites itself).
 pub fn respond_with_images(
     images: Vec<String>,
     format: Format,
     save: bool,
+    save_path: Option<&Path>,
     payload_limits: &PayloadLimits,
 ) -> CallToolResult {
     let mut content = Vec::with_capacity(images.len());
@@ -124,9 +150,18 @@ pub fn respond_with_images(
         }
     }
 
-    for b64_data in images {
+    let is_dir_target = save_path.is_some_and(image_store::is_directory_target);
+
+    for (index, b64_data) in images.into_iter().enumerate() {
         if save {
-            match image_store::save_image(&b64_data, format) {
+            let target = match save_path {
+                Some(path) if is_dir_target => Some(path.to_path_buf()),
+                Some(path) if index == 0 => Some(path.to_path_buf()),
+                Some(path) => Some(suffixed_path(path, index)),
+                None => None,
+            };
+
+            match image_store::save_image(&b64_data, format, target.as_deref()) {
                 Ok(path) => content.push(ContentBlock::text(path.display().to_string())),
                 Err(err) => {
                     return CallToolResult::error(vec![ContentBlock::text(format!(
@@ -140,6 +175,23 @@ pub fn respond_with_images(
     }
 
     CallToolResult::success(content)
+}
+
+/// Inserts a `-<index>` suffix before the file extension (or at the end, if
+/// there is no extension) of an exact file-path save target, so that
+/// multiple images saved to the same file-path target don't overwrite each
+/// other. `index` is 0-based but the first collision-avoiding suffix used
+/// is `-1` (index 0 keeps the original, unsuffixed path).
+fn suffixed_path(path: &Path, index: usize) -> PathBuf {
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let new_name = match path.extension() {
+        Some(ext) => format!("{stem}-{index}.{}", ext.to_string_lossy()),
+        None => format!("{stem}-{index}"),
+    };
+    path.with_file_name(new_name)
 }
 
 #[cfg(test)]
@@ -166,6 +218,7 @@ mod tests {
             format: None,
             image: None,
             save: None,
+            save_path: None,
         };
         let defaults = sample_defaults();
         let resolved = params.resolve(&defaults);
@@ -188,6 +241,7 @@ mod tests {
             format: Some(Format::Jpg),
             image: None,
             save: Some(true),
+            save_path: None,
         };
         let defaults = sample_defaults();
         let resolved = params.resolve(&defaults);
@@ -210,6 +264,7 @@ mod tests {
             format: Some(Format::Webp),
             image: None,
             save: None,
+            save_path: None,
         };
         let defaults = ImageDefaults {
             model: "default-model".to_string(),
@@ -238,6 +293,7 @@ mod tests {
             format: None,
             image: None,
             save: None,
+            save_path: None,
         };
         let defaults = sample_defaults();
         let resolved = params.resolve(&defaults);
@@ -252,6 +308,7 @@ mod tests {
             size: "1024x1024".to_string(),
             format: Format::Png,
             save: false,
+            save_path: None,
         }
     }
 
@@ -306,7 +363,13 @@ mod tests {
             warn_inline_bytes: 4 * 1024 * 1024,
             max_inline_bytes: 8 * 1024 * 1024,
         };
-        let result = respond_with_images(vec!["aGVsbG8=".to_string()], Format::Png, false, &limits);
+        let result = respond_with_images(
+            vec!["aGVsbG8=".to_string()],
+            Format::Png,
+            false,
+            None,
+            &limits,
+        );
         assert_eq!(result.is_error, Some(false));
         assert_eq!(result.content.len(), 1);
         assert!(matches!(result.content[0], ContentBlock::Image(_)));
@@ -323,7 +386,7 @@ mod tests {
             warn_inline_bytes: 4 * 1024 * 1024,
             max_inline_bytes: 8 * 1024 * 1024,
         };
-        let result = respond_with_images(vec![b64], Format::Png, true, &limits);
+        let result = respond_with_images(vec![b64], Format::Png, true, None, &limits);
         assert_eq!(result.is_error, Some(true));
     }
 
@@ -337,6 +400,7 @@ mod tests {
             vec!["not valid base64!!!".to_string()],
             Format::Png,
             true,
+            None,
             &limits,
         );
         assert_eq!(result.is_error, Some(true));
@@ -352,6 +416,7 @@ mod tests {
             vec!["aGVsbG8=".to_string(), "d29ybGQ=".to_string()],
             Format::Jpg,
             false,
+            None,
             &limits,
         );
         assert_eq!(result.is_error, Some(false));
@@ -367,7 +432,13 @@ mod tests {
             warn_inline_bytes: 4 * 1024 * 1024,
             max_inline_bytes: 8 * 1024 * 1024,
         };
-        let result = respond_with_images(vec!["aGVsbG8=".to_string()], Format::Png, false, &limits);
+        let result = respond_with_images(
+            vec!["aGVsbG8=".to_string()],
+            Format::Png,
+            false,
+            None,
+            &limits,
+        );
         assert_eq!(result.is_error, Some(false));
     }
 
@@ -383,7 +454,7 @@ mod tests {
             warn_inline_bytes: 4 * 1024 * 1024,
             max_inline_bytes: 8 * 1024 * 1024,
         };
-        let result = respond_with_images(vec![big], Format::Png, false, &limits);
+        let result = respond_with_images(vec![big], Format::Png, false, None, &limits);
         assert_eq!(result.is_error, Some(false));
         assert_eq!(result.content.len(), 1);
         assert!(matches!(result.content[0], ContentBlock::Image(_)));
@@ -404,7 +475,7 @@ mod tests {
             warn_inline_bytes: 4 * 1024 * 1024,
             max_inline_bytes: 8 * 1024 * 1024,
         };
-        let result = respond_with_images(vec![big_b64], Format::Png, true, &limits);
+        let result = respond_with_images(vec![big_b64], Format::Png, true, None, &limits);
         assert_eq!(result.is_error, Some(false));
         assert_eq!(result.content.len(), 1);
         let path = match &result.content[0] {
@@ -412,5 +483,151 @@ mod tests {
             _ => panic!("expected text block"),
         };
         std::fs::remove_file(&path).ok();
+    }
+
+    fn sample_limits() -> PayloadLimits {
+        PayloadLimits {
+            warn_inline_bytes: 4 * 1024 * 1024,
+            max_inline_bytes: 8 * 1024 * 1024,
+        }
+    }
+
+    fn valid_png_b64() -> String {
+        use base64::Engine as _;
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend_from_slice(b"rest-of-file");
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    }
+
+    #[test]
+    fn resolve_maps_save_path_string_to_path_buf() {
+        let params = ImageParams {
+            prompt: "hello".to_string(),
+            model: None,
+            n: None,
+            size: None,
+            format: None,
+            image: None,
+            save: Some(true),
+            save_path: Some("/tmp/out.png".to_string()),
+        };
+        let resolved = params.resolve(&sample_defaults());
+        assert_eq!(resolved.save_path, Some(PathBuf::from("/tmp/out.png")));
+    }
+
+    #[test]
+    fn resolve_save_path_defaults_to_none() {
+        let params = ImageParams {
+            prompt: "hello".to_string(),
+            model: None,
+            n: None,
+            size: None,
+            format: None,
+            image: None,
+            save: None,
+            save_path: None,
+        };
+        let resolved = params.resolve(&sample_defaults());
+        assert_eq!(resolved.save_path, None);
+    }
+
+    #[test]
+    fn validate_rejects_empty_save_path() {
+        let mut resolved = sample_resolved();
+        resolved.save_path = Some(PathBuf::from(""));
+        let err = resolved.validate().unwrap_err();
+        assert!(err.contains("save_path"));
+    }
+
+    #[test]
+    fn validate_accepts_non_empty_save_path() {
+        let mut resolved = sample_resolved();
+        resolved.save_path = Some(PathBuf::from("/tmp/out.png"));
+        assert!(resolved.validate().is_ok());
+    }
+
+    #[test]
+    fn respond_with_images_save_path_exact_file_writes_that_path() {
+        let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
+        let file = dir.join("exact.png");
+
+        let result = respond_with_images(
+            vec![valid_png_b64()],
+            Format::Png,
+            true,
+            Some(&file),
+            &sample_limits(),
+        );
+        assert_eq!(result.is_error, Some(false));
+        let path = match &result.content[0] {
+            ContentBlock::Text(t) => t.text.clone(),
+            _ => panic!("expected text block"),
+        };
+        assert_eq!(PathBuf::from(&path), file);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn respond_with_images_save_path_directory_writes_generated_filenames() {
+        let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+
+        let result = respond_with_images(
+            vec![valid_png_b64(), valid_png_b64()],
+            Format::Png,
+            true,
+            Some(&dir),
+            &sample_limits(),
+        );
+        assert_eq!(result.is_error, Some(false));
+        assert_eq!(result.content.len(), 2);
+        for block in &result.content {
+            let path = match block {
+                ContentBlock::Text(t) => PathBuf::from(&t.text),
+                _ => panic!("expected text block"),
+            };
+            assert!(path.starts_with(&dir));
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn respond_with_images_save_path_exact_file_multiple_images_gets_suffixed() {
+        let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
+        let file = dir.join("exact.png");
+
+        let result = respond_with_images(
+            vec![valid_png_b64(), valid_png_b64()],
+            Format::Png,
+            true,
+            Some(&file),
+            &sample_limits(),
+        );
+        assert_eq!(result.is_error, Some(false));
+        assert_eq!(result.content.len(), 2);
+
+        let paths: Vec<PathBuf> = result
+            .content
+            .iter()
+            .map(|block| match block {
+                ContentBlock::Text(t) => PathBuf::from(&t.text),
+                _ => panic!("expected text block"),
+            })
+            .collect();
+        assert_eq!(paths[0], file);
+        assert_eq!(paths[1], dir.join("exact-1.png"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn suffixed_path_inserts_before_extension() {
+        let path = PathBuf::from("/tmp/foo/bar.png");
+        assert_eq!(suffixed_path(&path, 2), PathBuf::from("/tmp/foo/bar-2.png"));
+    }
+
+    #[test]
+    fn suffixed_path_handles_missing_extension() {
+        let path = PathBuf::from("/tmp/foo/bar");
+        assert_eq!(suffixed_path(&path, 1), PathBuf::from("/tmp/foo/bar-1"));
     }
 }

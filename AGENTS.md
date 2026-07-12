@@ -23,7 +23,8 @@
 - `edit` is prompt-driven only: no mask/inpainting API surface.
 - `edit` accepts one or more base64 images and sends each to LiteLLM as its own `image[]` multipart part.
 - `create` sends `response_format: "b64_json"`; `edit` intentionally does not. `PLAN.md` documents the verified LiteLLM behavior behind that split.
-- `save: true` writes files under the user's pictures dir when available, else home, else temp. Default `save: false` returns inline MCP `image` blocks, which can get large over stdio.
+- `save: true` writes files under the user's pictures dir when available, else home, else temp — unless overridden by `save_path`. Default `save: false` returns inline MCP `image` blocks, which can get large over stdio.
+- `save_path` (optional, only used when the resolved `save` is `true`) accepts either a directory (existing, or trailing `/`) to save generated images inside with a generated filename, or an exact file path to save to directly (extension appended if missing; multi-image responses get a `-<index>` suffix on collisions).
 
 ## Repo Notes
 

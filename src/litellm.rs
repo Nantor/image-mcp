@@ -287,6 +287,7 @@ mod integration_tests {
             size: "1024x1024".to_string(),
             format: Format::Png,
             save: false,
+            save_path: None,
         }
     }
 

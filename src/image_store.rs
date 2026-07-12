@@ -1,5 +1,5 @@
 use base64::Engine as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::Format;
 
@@ -15,10 +15,23 @@ pub enum ImageStoreError {
     Write(PathBuf, std::io::Error),
 }
 
-/// Decodes a base64 image and writes it to disk under
-/// `~/Pictures/image-mcp/` (falling back to the system temp dir if no home
-/// directory can be determined), returning the path written to.
-pub fn save_image(b64_data: &str, format: Format) -> Result<PathBuf, ImageStoreError> {
+/// Decodes a base64 image and writes it to disk, returning the path written
+/// to.
+///
+/// - `target: None` writes under the default save directory
+///   (`~/Pictures/image-mcp/`, falling back to `~/image-mcp/` or the system
+///   temp dir).
+/// - `target: Some(dir)` where `dir` is an existing directory (or a path
+///   ending in a path separator) writes inside that directory with a
+///   generated filename.
+/// - `target: Some(file)` otherwise is treated as an exact destination
+///   file path: parent directories are created as needed, and the
+///   `format`'s extension is appended if `file` has none.
+pub fn save_image(
+    b64_data: &str,
+    format: Format,
+    target: Option<&Path>,
+) -> Result<PathBuf, ImageStoreError> {
     let bytes = base64::engine::general_purpose::STANDARD.decode(b64_data)?;
     // Basic sanity check: ensure the decoded bytes look like the expected
     // image format before writing, so obviously wrong data doesn't get
@@ -26,8 +39,28 @@ pub fn save_image(b64_data: &str, format: Format) -> Result<PathBuf, ImageStoreE
     if !matches_expected_format(&bytes, format) {
         return Err(ImageStoreError::InvalidFormat(format.as_str()));
     }
-    let dir = save_dir()?;
-    write_image_to_dir(&bytes, &dir, format)
+    match target {
+        Some(path) if is_directory_target(path) => write_image_to_dir(&bytes, path, format),
+        Some(path) => write_image_to_file(&bytes, path, format),
+        None => {
+            let dir = save_dir()?;
+            write_image_to_dir(&bytes, &dir, format)
+        }
+    }
+}
+
+/// True if `path` should be treated as a directory to save inside (rather
+/// than an exact destination file path): either it already exists as a
+/// directory, or it doesn't exist yet but ends with a path separator.
+pub fn is_directory_target(path: &Path) -> bool {
+    if path.is_dir() {
+        return true;
+    }
+    if path.exists() {
+        return false;
+    }
+    let raw = path.as_os_str().to_string_lossy();
+    raw.ends_with('/') || raw.ends_with(std::path::MAIN_SEPARATOR)
 }
 
 /// Writes already-decoded image bytes under `dir`, creating it if needed.
@@ -42,6 +75,30 @@ fn write_image_to_dir(
 
     let filename = format!("image-mcp-{}.{}", uuid::Uuid::new_v4(), format.as_str());
     let path = dir.join(filename);
+
+    std::fs::write(&path, bytes).map_err(|e| ImageStoreError::Write(path.clone(), e))?;
+
+    Ok(path)
+}
+
+/// Writes already-decoded image bytes to the exact path `file`, creating
+/// its parent directory if needed. If `file` has no extension, the
+/// `format`'s extension is appended.
+fn write_image_to_file(
+    bytes: &[u8],
+    file: &Path,
+    format: Format,
+) -> Result<PathBuf, ImageStoreError> {
+    let path = if file.extension().is_none() {
+        file.with_extension(format.as_str())
+    } else {
+        file.to_path_buf()
+    };
+
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| ImageStoreError::CreateDir(parent.to_path_buf(), e))?;
+    }
 
     std::fs::write(&path, bytes).map_err(|e| ImageStoreError::Write(path.clone(), e))?;
 
@@ -80,13 +137,13 @@ mod tests {
 
         // bytes are not a real PNG, so save_image must reject them as
         // InvalidFormat rather than writing misleading data.
-        let result = save_image(&b64, Format::Png);
+        let result = save_image(&b64, Format::Png, None);
         assert!(matches!(result, Err(ImageStoreError::InvalidFormat("png"))));
     }
 
     #[test]
     fn save_image_rejects_invalid_base64() {
-        let result = save_image("not valid base64!!!", Format::Png);
+        let result = save_image("not valid base64!!!", Format::Png, None);
         assert!(matches!(result, Err(ImageStoreError::Decode(_))));
     }
 
@@ -97,11 +154,97 @@ mod tests {
         bytes.extend_from_slice(b"rest-of-file");
         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
 
-        let path = save_image(&b64, Format::Png).expect("save_image should succeed for PNG");
+        let path = save_image(&b64, Format::Png, None).expect("save_image should succeed for PNG");
         assert_eq!(path.extension().and_then(|e| e.to_str()), Some("png"));
         let written = std::fs::read(&path).expect("file should exist");
         assert_eq!(written, bytes);
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn save_image_with_directory_target_writes_generated_filename_inside_it() {
+        let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
+        // Directory does not exist yet: verify the trailing-separator
+        // heuristic still treats it as a directory target.
+        let mut target = dir.clone().into_os_string();
+        target.push(std::path::MAIN_SEPARATOR.to_string());
+        let target = PathBuf::from(target);
+
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend_from_slice(b"rest-of-file");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+        let path = save_image(&b64, Format::Png, Some(&target))
+            .expect("save_image should succeed with directory target");
+        assert!(path.starts_with(&dir));
+        assert_eq!(path.extension().and_then(|e| e.to_str()), Some("png"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_image_with_existing_directory_target_writes_generated_filename_inside_it() {
+        let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend_from_slice(b"rest-of-file");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+        let path = save_image(&b64, Format::Png, Some(&dir))
+            .expect("save_image should succeed with existing directory target");
+        assert!(path.starts_with(&dir));
+        assert_eq!(path.extension().and_then(|e| e.to_str()), Some("png"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_image_with_file_target_writes_exact_path_and_keeps_extension() {
+        let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
+        let file = dir.join("nested").join("my-image.png");
+
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend_from_slice(b"rest-of-file");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+        let path = save_image(&b64, Format::Png, Some(&file))
+            .expect("save_image should succeed with exact file target");
+        assert_eq!(path, file);
+        let written = std::fs::read(&path).expect("file should exist");
+        assert_eq!(written, bytes);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_image_with_file_target_missing_extension_appends_format_extension() {
+        let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
+        let file = dir.join("my-image");
+
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend_from_slice(b"rest-of-file");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+        let path = save_image(&b64, Format::Png, Some(&file))
+            .expect("save_image should succeed with exact file target");
+        assert_eq!(path, dir.join("my-image.png"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn is_directory_target_detects_existing_directory() {
+        let dir = std::env::temp_dir();
+        assert!(is_directory_target(&dir));
+    }
+
+    #[test]
+    fn is_directory_target_detects_trailing_separator_on_nonexistent_path() {
+        let path = PathBuf::from("/tmp/definitely-does-not-exist-image-mcp/");
+        assert!(is_directory_target(&path));
+    }
+
+    #[test]
+    fn is_directory_target_rejects_plain_nonexistent_file_path() {
+        let path = PathBuf::from("/tmp/definitely-does-not-exist-image-mcp/file.png");
+        assert!(!is_directory_target(&path));
     }
 
     #[cfg(unix)]
