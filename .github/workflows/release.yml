@@ -140,22 +140,16 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            archive: tar.gz
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            archive: tar.gz
           - target: x86_64-apple-darwin
             os: macos-latest
-            archive: tar.gz
           - target: aarch64-apple-darwin
             os: macos-latest
-            archive: tar.gz
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            archive: zip
           - target: aarch64-pc-windows-msvc
             os: windows-latest
-            archive: zip
 
     steps:
       - uses: actions/checkout@v7
@@ -199,24 +193,21 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.tag }}
           TARGET: ${{ matrix.target }}
+          OS: ${{ matrix.os }}
         run: |
           BIN="image-mcp"
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+          if [[ "${OS}" == "windows-latest" ]]; then
             BIN="image-mcp.exe"
           fi
 
-          mkdir -p dist
-          cp "target/${{ matrix.target }}/release/${BIN}" dist/
-          echo "Copied ${BIN} to dist/"
-
-          if [[ "${{ matrix.archive }}" == "zip" ]]; then
-            7z a "image-mcp-${VERSION}-${TARGET}.zip" dist/${BIN}
-            UPLOAD_FILE="image-mcp-${VERSION}-${TARGET}.zip"
-          else
-            tar -czf "image-mcp-${VERSION}-${TARGET}.tar.gz" dist/${BIN}
-            UPLOAD_FILE="image-mcp-${VERSION}-${TARGET}.tar.gz"
+          DISPLAY_TARGET="${TARGET//aarch64/arm64}"
+          UPLOAD_FILE="image-mcp-${VERSION}-${DISPLAY_TARGET}"
+          if [[ "${OS}" == "windows-latest" ]]; then
+            UPLOAD_FILE="${UPLOAD_FILE}.exe"
           fi
-          echo "Packaged archive: ${UPLOAD_FILE}"
+
+          cp "target/${TARGET}/release/${BIN}" "${UPLOAD_FILE}"
+          echo "Packaged binary: ${UPLOAD_FILE}"
           echo "UPLOAD_FILE=${UPLOAD_FILE}" >> $GITHUB_ENV
 
       - name: Upload release artifact
