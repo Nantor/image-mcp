@@ -110,6 +110,10 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.should_release == 'true'
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
