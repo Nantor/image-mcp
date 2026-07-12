@@ -69,7 +69,7 @@ jobs:
             TAG_SHA=$(git rev-list -n 1 "${TAG}")
             echo "Tag ${TAG} already exists, pointing at ${TAG_SHA}"
             if [[ "${TAG_SHA}" == "${{ github.event.workflow_run.head_sha }}" ]]; then
-              echo "Tag already points at this commit -> release was already handled by the tag-push run, skipping"
+              echo "Tag already points at this commit -> skipping this workflow_run to avoid duplicate release"
               echo "create_tag=false" >> $GITHUB_OUTPUT
               echo "ref=refs/tags/${TAG}" >> $GITHUB_OUTPUT
               echo "tag=${TAG}" >> $GITHUB_OUTPUT
@@ -82,11 +82,11 @@ jobs:
               echo "should_release=false" >> $GITHUB_OUTPUT
             fi
           else
-            echo "Tag ${TAG} does not exist yet -> will create and push it, triggering a follow-up run via tag push"
+            echo "Tag ${TAG} does not exist yet -> will create and push it, then continue release in the same run"
             echo "create_tag=true" >> $GITHUB_OUTPUT
             echo "ref=refs/tags/${TAG}" >> $GITHUB_OUTPUT
             echo "tag=${TAG}" >> $GITHUB_OUTPUT
-            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "should_release=true" >> $GITHUB_OUTPUT
           fi
 
       - name: Create and push tag
