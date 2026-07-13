@@ -43,6 +43,7 @@ pub struct ImageParams {
 pub struct ResolvedParams {
     pub prompt: String,
     pub model: String,
+    /// Number of images to generate (always ≥ 1).
     pub n: u32,
     pub size: String,
     pub format: Format,
