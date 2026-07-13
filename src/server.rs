@@ -58,7 +58,7 @@ impl ServerHandler for ImageMcpServer {
             .with_server_info(Implementation::from_build_env())
             .with_protocol_version(ProtocolVersion::V_2024_11_05)
             .with_instructions(
-                "Image generation and editing backed by a LiteLLM proxy. Tools: create (text-to-image), edit (prompt-driven image editing, no mask support), list_models (configured image models).".to_string(),
+                "Image generation and editing backed by an OpenAI-compatible image API (or proxy). Tools: create (text-to-image), edit (prompt-driven image editing, no mask support), list_models (configured image models).".to_string(),
             )
     }
 }

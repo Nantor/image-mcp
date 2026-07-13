@@ -1,7 +1,7 @@
 # image-mcp — Plan
 
 An MCP server, written in Rust, exposing AI image generation and editing tools
-backed by a LiteLLM proxy (OpenAI-compatible image API).
+backed by an OpenAI-compatible image API (or proxy).
 
 ## Scope
 
@@ -36,16 +36,16 @@ struct ImageParams {
   `input_path` entries are read from disk with `std::fs::read`; a missing
   file, unreadable file, or empty file is likewise a validation error.
 - `create` → `POST {base_url}/v1/images/generations` (JSON body)
-- `edit` → `POST {base_url}/v1/images/edits` (multipart/form-data: one `image[]` file part per input image, `prompt`/`model` as text fields — per LiteLLM's OpenAPI spec; verified against a live LiteLLM proxy that multiple `image[]` parts in one request let the model compose/reference all of them, e.g. combining a subject from one image with a background from another)
+- `edit` → `POST {base_url}/v1/images/edits` (multipart/form-data: one `image[]` file part per input image, `prompt`/`model` as text fields — per the OpenAI images API schema; verified against a live OpenAI-compatible proxy that multiple `image[]` parts in one request let the model compose/reference all of them, e.g. combining a subject from one image with a background from another)
 - `create` explicitly sets `response_format: b64_json` and this is
   honored by the models tested against.
 - `edit` does **not** send `response_format` — verified against a live
-  LiteLLM proxy that at least `gpt-image-1.5` rejects it on this endpoint
+  OpenAI-compatible proxy that at least `gpt-image-1.5` rejects it on this endpoint
   with a 400 (`Unknown parameter: 'response_format'`), while
   `/v1/images/generations` accepts it fine. The edits endpoint returns
   `b64_json` data by default regardless.
 - `list_models` takes no input, returns `image_models` straight from config
-  (no LiteLLM call).
+  (no external image API call).
 
 ## Response shape
 
