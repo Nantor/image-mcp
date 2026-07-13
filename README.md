@@ -205,4 +205,4 @@ cargo fmt --all -- --check
 | `src/image_store.rs` | Base64 decoding, lightweight format checking, and filesystem writes for images |
 | `src/litellm.rs` | HTTP client for the upstream OpenAI-compatible image API: base URL normalization, request construction, and response parsing |
 
-See `PLAN.md` for the complete design spec and HTTP capture scripts under `scripts/http-capture/` for raw HTTP request/response examples.
+See `PLAN.md` for the complete design spec.

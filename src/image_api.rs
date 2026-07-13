@@ -475,7 +475,7 @@ mod integration_tests {
         // markers, which is the observable contract we care about: one
         // part per input image (verified for real against an
         // OpenAI-compatible proxy — see
-        // scripts/http-capture/captures/edit/20260710T204757Z).
+        // (see manual HTTP capture logs for exact format).
         Mock::given(method("POST"))
             .and(path("/v1/images/edits"))
             .respond_with(move |req: &Request| {
