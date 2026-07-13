@@ -37,7 +37,7 @@ Example `config.json`:
 
 ```jsonc
 {
-  "lite_llm": {
+  "image_api": {
     "base_url": "http://localhost:4000",
     "api_key": "sk-...",
     "request_timeout_secs": 180

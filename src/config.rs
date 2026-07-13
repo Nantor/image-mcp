@@ -21,24 +21,24 @@ impl Format {
     }
 }
 
-/// Default request timeout (seconds) applied to LiteLLM calls when
-/// `lite_llm.request_timeout_secs` is not set in config. Image
+/// Default request timeout (seconds) applied when
+/// `image_api.request_timeout_secs` is not set in config. Image
 /// generation/editing can be slow (large `n`/`size` combinations on models
-/// like `gpt-image-1` routinely take tens of seconds), but a hung LiteLLM
-/// proxy or dead upstream must not block a tool call forever.
+/// like `gpt-image-1` routinely take tens of seconds), but a hung proxy or
+/// dead upstream must not block a tool call forever.
 pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 180;
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct LiteLlmConfig {
+pub struct ImageApiConfig {
     pub base_url: String,
     pub api_key: String,
-    /// Per-request timeout, in seconds, for calls to LiteLLM. Falls back to
+    /// Per-request timeout, in seconds. Falls back to
     /// `DEFAULT_REQUEST_TIMEOUT_SECS` if omitted.
     #[serde(default)]
     pub request_timeout_secs: Option<u64>,
 }
 
-impl LiteLlmConfig {
+impl ImageApiConfig {
     pub fn request_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_secs(
             self.request_timeout_secs
@@ -57,7 +57,7 @@ pub struct ImageDefaults {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
-    pub lite_llm: LiteLlmConfig,
+    pub image_api: ImageApiConfig,
     pub image_models: Vec<String>,
     pub create_defaults: ImageDefaults,
     pub edit_defaults: ImageDefaults,
@@ -151,7 +151,7 @@ fn validate_image_defaults(
 
 /// Simple validation that `size` looks like `<digits>x<digits>` (e.g.
 /// `1024x1024`). This is a shape check only; actual dimensions are still
-/// constrained by LiteLLM/the model.
+/// constrained by the upstream model.
 fn is_valid_size_str(size: &str) -> bool {
     match size.split_once('x') {
         Some((w, h)) => {
@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn request_timeout_falls_back_to_default() {
-        let config = LiteLlmConfig {
+        let config = ImageApiConfig {
             base_url: "http://localhost:4000".to_string(),
             api_key: "key".to_string(),
             request_timeout_secs: None,
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn request_timeout_uses_configured_value() {
-        let config = LiteLlmConfig {
+        let config = ImageApiConfig {
             base_url: "http://localhost:4000".to_string(),
             api_key: "key".to_string(),
             request_timeout_secs: Some(30),
@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn validate_config_rejects_empty_image_models() {
         let config = Config {
-            lite_llm: LiteLlmConfig {
+            image_api: ImageApiConfig {
                 base_url: "http://localhost:4000".to_string(),
                 api_key: "key".to_string(),
                 request_timeout_secs: None,
@@ -290,7 +290,7 @@ mod tests {
     #[test]
     fn validate_config_rejects_defaults_with_unknown_model() {
         let config = Config {
-            lite_llm: LiteLlmConfig {
+            image_api: ImageApiConfig {
                 base_url: "http://localhost:4000".to_string(),
                 api_key: "key".to_string(),
                 request_timeout_secs: None,
@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn validate_config_rejects_zero_n() {
         let config = Config {
-            lite_llm: LiteLlmConfig {
+            image_api: ImageApiConfig {
                 base_url: "http://localhost:4000".to_string(),
                 api_key: "key".to_string(),
                 request_timeout_secs: None,
@@ -352,7 +352,7 @@ mod tests {
     #[test]
     fn validate_config_rejects_malformed_size() {
         let config = Config {
-            lite_llm: LiteLlmConfig {
+            image_api: ImageApiConfig {
                 base_url: "http://localhost:4000".to_string(),
                 api_key: "key".to_string(),
                 request_timeout_secs: None,

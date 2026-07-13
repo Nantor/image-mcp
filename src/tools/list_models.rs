@@ -2,7 +2,7 @@ use rmcp::model::{CallToolResult, ContentBlock};
 
 use crate::config::Config;
 
-/// Runs the `list_models` tool. Never calls LiteLLM — just returns the
+/// Runs the `list_models` tool. Never calls the upstream API — just returns the
 /// configured `image_models` list.
 pub fn run(config: &Config) -> CallToolResult {
     let json = serde_json::json!({ "image_models": config.image_models });
@@ -11,13 +11,13 @@ pub fn run(config: &Config) -> CallToolResult {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{ImageDefaults, LiteLlmConfig};
+    use crate::config::{ImageApiConfig, ImageDefaults};
 
     use super::*;
 
     fn sample_config() -> Config {
         Config {
-            lite_llm: LiteLlmConfig {
+            image_api: ImageApiConfig {
                 base_url: "http://localhost:4000".to_string(),
                 api_key: "test-key".to_string(),
                 request_timeout_secs: None,

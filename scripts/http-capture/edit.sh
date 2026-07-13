@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Raw-request capture script for the `edit` tool's LiteLLM call.
+# Raw-request capture script for the `edit` tool's image API call.
 #
-# Mirrors LiteLlmClient::edit() in src/litellm.rs, with one deliberate
+# Mirrors ImageApiClient::edit() in src/image_api.rs, with one deliberate
 # EXPERIMENTAL deviation: this script accepts a repeatable --image flag
 # and sends one `image[]` multipart part per image, per OpenAI's
 # /v1/images/edits spec which accepts an *array* of input images. The
-# current Rust implementation (litellm.rs::edit / ImageParams) only
+# current Rust implementation (image_api.rs::edit / ImageParams) only
 # supports a single `image: Option<String>` — this script exists to
-# test whether the live LiteLLM/model combo honors multi-image edits
+# test whether the live OpenAI-compatible proxy/model honors multi-image edits
 # before committing to that change in the production code.
 #
 #   POST {base_url}/v1/images/edits
@@ -90,8 +90,8 @@ done
 
 CONFIG_JSON="$(load_config_json)"
 
-BASE_URL="$(cfg "$CONFIG_JSON" '.lite_llm.base_url' | sed 's:/*$::' | sed 's:/v1/*$::')"
-API_KEY="$(cfg "$CONFIG_JSON" '.lite_llm.api_key')"
+BASE_URL="$(cfg "$CONFIG_JSON" '.image_api.base_url' | sed 's:/*$::' | sed 's:/v1/*$::')"
+API_KEY="$(cfg "$CONFIG_JSON" '.image_api.api_key')"
 
 # Resolve against edit_defaults, same precedence as ImageParams::resolve.
 RESOLVED_MODEL="${MODEL:-$(cfg "$CONFIG_JSON" '.edit_defaults.model')}"

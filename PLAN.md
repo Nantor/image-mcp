@@ -77,7 +77,7 @@ There are no hardcoded defaults, no auto-creation, and no merging with built-in 
 
 ```jsonc
 {
-  "lite_llm": {
+  "image_api": {
     "base_url": "http://localhost:4000",
     "api_key": "sk-...",
     "request_timeout_secs": 180 // optional, defaults to 180
@@ -106,14 +106,14 @@ Per-call params in a tool invocation override the matching config default.
 - **MCP SDK**: [`rmcp`](https://docs.rs/rmcp) (official SDK) — features:
   `server`, `macros`, `transport-io` (stdio), `schemars` (for
   `JsonSchema`-derived tool param schemas)
-- **HTTP client**: `reqwest` — direct calls to LiteLLM, no SDK wrapper
+- **HTTP client**: `reqwest` — direct calls to any OpenAI-compatible image API proxy, no SDK wrapper
 - **Transport**: stdio
 - **Logging**: `tracing` to stderr (stdout is reserved for JSON-RPC on
   stdio transport — never log there)
 
 ## Error handling
 
-- Runtime failures (LiteLLM unreachable, bad model, invalid image, disk
+- Runtime failures (upstream unreachable, bad model, invalid image, disk
   write failure) → MCP tool result with `isError: true`, so the calling LLM
   can see the error and retry/adjust.
 - Config missing or invalid at startup → process exits immediately with a
@@ -165,7 +165,7 @@ been resolved and are covered by tests:
   least `gpt-image-1.5` returns a 400 `Unknown parameter`), so `edit` no
   longer sends it. See "Tool schemas" above.
 - Multipart field names for `/v1/images/edits` — confirmed against a live
-  LiteLLM instance: plain form fields for
+   OpenAI-compatible proxy: plain form fields for
   `prompt`/`model`/`n`/`size`/`output_format`, plus one `image[]` file
   part per input image (multiple parts accepted and composited by the
   model).

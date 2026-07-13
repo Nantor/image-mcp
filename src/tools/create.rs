@@ -1,12 +1,12 @@
 use rmcp::model::{CallToolResult, ContentBlock};
 
 use crate::config::Config;
-use crate::litellm::ImageApiClient;
+use crate::image_api::ImageApiClient;
 
 use super::ImageParams;
 
 /// Runs the `create` (text-to-image) tool: resolves params against
-/// `create_defaults`, calls LiteLLM's `/v1/images/generations`, and returns
+/// `create_defaults`, calls the image API's `/v1/images/generations`, and returns
 /// either an inline image block or a saved file path per `save`.
 pub async fn run(config: &Config, client: &ImageApiClient, params: ImageParams) -> CallToolResult {
     let resolved = params.resolve(&config.create_defaults);
@@ -30,13 +30,13 @@ pub async fn run(config: &Config, client: &ImageApiClient, params: ImageParams) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Format, ImageDefaults, LiteLlmConfig};
+    use crate::config::{Format, ImageApiConfig, ImageDefaults};
     use base64::Engine as _;
     use rmcp::model::ContentBlock;
 
     fn config_for_base_url(base_url: &str) -> Config {
         Config {
-            lite_llm: LiteLlmConfig {
+            image_api: ImageApiConfig {
                 base_url: base_url.to_string(),
                 api_key: "test-key".to_string(),
                 request_timeout_secs: None,
@@ -72,7 +72,7 @@ mod tests {
     #[tokio::test]
     async fn empty_prompt_returns_validation_error_without_network_call() {
         let config = config_for_base_url("http://localhost:4000");
-        let client = ImageApiClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.image_api);
 
         let result = run(&config, &client, sample_params("   ", "/tmp/out.png")).await;
         assert_eq!(result.is_error, Some(true));
@@ -88,7 +88,7 @@ mod tests {
     #[tokio::test]
     async fn invalid_size_returns_validation_error() {
         let config = config_for_base_url("http://localhost:4000");
-        let client = ImageApiClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.image_api);
 
         let mut params = sample_params("a red bicycle", "/tmp/out.png");
         params.size = Some("not-a-size".to_string());
@@ -118,7 +118,7 @@ mod tests {
             .await;
 
         let config = config_for_base_url(&mock_server.uri());
-        let client = ImageApiClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.image_api);
 
         let result = run(
             &config,
@@ -156,7 +156,7 @@ mod tests {
             .await;
 
         let config = config_for_base_url(&mock_server.uri());
-        let client = ImageApiClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.image_api);
 
         let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
         let target = dir.join("bicycle.png");

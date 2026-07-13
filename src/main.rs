@@ -1,6 +1,6 @@
 mod config;
+mod image_api;
 mod image_store;
-mod litellm;
 mod server;
 mod tools;
 

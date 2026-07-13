@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Raw-request capture script for the `create` tool's LiteLLM call.
+# Raw-request capture script for the `create` tool's image API call.
 #
-# Mirrors LiteLlmClient::generate() in src/litellm.rs exactly:
+# Mirrors ImageApiClient::generate() in src/image_api.rs exactly:
 #   POST {base_url}/v1/images/generations
 #   Content-Type: application/json
 #   Authorization: Bearer <api_key>
@@ -68,8 +68,8 @@ done
 
 CONFIG_JSON="$(load_config_json)"
 
-BASE_URL="$(cfg "$CONFIG_JSON" '.lite_llm.base_url' | sed 's:/*$::' | sed 's:/v1/*$::')"
-API_KEY="$(cfg "$CONFIG_JSON" '.lite_llm.api_key')"
+BASE_URL="$(cfg "$CONFIG_JSON" '.image_api.base_url' | sed 's:/*$::' | sed 's:/v1/*$::')"
+API_KEY="$(cfg "$CONFIG_JSON" '.image_api.api_key')"
 
 # Resolve against create_defaults, same precedence as ImageParams::resolve.
 RESOLVED_MODEL="${MODEL:-$(cfg "$CONFIG_JSON" '.create_defaults.model')}"

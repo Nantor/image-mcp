@@ -65,7 +65,7 @@ impl ImageParams {
 impl ResolvedParams {
     /// Basic sanity checks run before hitting the network, so obviously
     /// invalid values surface as an immediate, clear tool error instead of
-    /// round-tripping to LiteLLM for a less helpful API error.
+    /// round-tripping to the upstream API for a less helpful error.
     pub fn validate(&self) -> Result<(), String> {
         if self.prompt.trim().is_empty() {
             return Err("`prompt` must not be empty".to_string());
@@ -88,7 +88,7 @@ impl ResolvedParams {
 
 /// Checks that `size` looks like `<digits>x<digits>` (e.g. `1024x1024`).
 /// This is a shape check only — the actual dimensions are still validated
-/// by LiteLLM/the model, since supported sizes vary per model.
+/// by the upstream model, since supported sizes vary per model.
 fn is_valid_size(size: &str) -> bool {
     match size.split_once('x') {
         Some((w, h)) => {

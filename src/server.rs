@@ -6,7 +6,7 @@ use rmcp::model::{
 use rmcp::{ErrorData as McpError, ServerHandler, tool, tool_handler, tool_router};
 
 use crate::config::Config;
-use crate::litellm::ImageApiClient;
+use crate::image_api::ImageApiClient;
 use crate::tools::{ImageParams, create, edit, list_models};
 
 #[derive(Clone)]
@@ -19,7 +19,7 @@ pub struct ImageMcpServer {
 #[tool_router]
 impl ImageMcpServer {
     pub fn new(config: Config) -> Self {
-        let client = ImageApiClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.image_api);
         Self {
             config: std::sync::Arc::new(config),
             client: std::sync::Arc::new(client),
@@ -66,12 +66,12 @@ impl ServerHandler for ImageMcpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Format, ImageDefaults, LiteLlmConfig};
+    use crate::config::{Format, ImageApiConfig, ImageDefaults};
     use rmcp::model::ContentBlock;
 
     fn sample_config() -> Config {
         Config {
-            lite_llm: LiteLlmConfig {
+            image_api: ImageApiConfig {
                 base_url: "http://localhost:4000".to_string(),
                 api_key: "test-key".to_string(),
                 request_timeout_secs: None,

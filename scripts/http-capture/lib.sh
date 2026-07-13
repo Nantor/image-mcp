@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared helpers for the create.sh / edit.sh raw-request capture scripts.
 #
-# These scripts hit LiteLLM directly with plain curl, building the exact
+# These scripts hit the upstream image API directly with plain curl, building the exact
 # request shape that src/litellm.rs sends, so you can inspect the raw
 # wire-level request/response without going through the MCP server at all.
 #

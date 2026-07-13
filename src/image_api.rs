@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::config::LiteLlmConfig;
+use crate::config::ImageApiConfig;
 use crate::tools::ResolvedParams;
 
 #[derive(Debug, thiserror::Error)]
@@ -40,7 +40,7 @@ pub struct ImageApiClient {
 }
 
 impl ImageApiClient {
-    pub fn new(config: &LiteLlmConfig) -> Self {
+    pub fn new(config: &ImageApiConfig) -> Self {
         let http = reqwest::Client::builder()
             .timeout(config.request_timeout())
             .build()
@@ -235,7 +235,7 @@ mod tests {
 
     #[test]
     fn clones_api_key() {
-        let config = LiteLlmConfig {
+        let config = ImageApiConfig {
             base_url: "http://localhost:4000".to_string(),
             api_key: "super-secret-key".to_string(),
             request_timeout_secs: None,
@@ -291,7 +291,7 @@ mod integration_tests {
     }
 
     fn client_for(mock_server: &MockServer) -> ImageApiClient {
-        let config = LiteLlmConfig {
+        let config = ImageApiConfig {
             base_url: mock_server.uri(),
             api_key: "test-api-key".to_string(),
             request_timeout_secs: None,
@@ -473,7 +473,8 @@ mod integration_tests {
         // wiremock doesn't parse multipart bodies out of the box, so we
         // inspect the raw request body for the number of `image[]` field
         // markers, which is the observable contract we care about: one
-        // part per input image (verified for real against LiteLLM — see
+        // part per input image (verified for real against an
+        // OpenAI-compatible proxy — see
         // scripts/http-capture/captures/edit/20260710T204757Z).
         Mock::given(method("POST"))
             .and(path("/v1/images/edits"))
@@ -569,7 +570,7 @@ mod integration_tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let config = LiteLlmConfig {
+        let config = ImageApiConfig {
             base_url: format!("http://127.0.0.1:{port}"),
             api_key: "test-api-key".to_string(),
             request_timeout_secs: None,

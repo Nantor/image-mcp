@@ -3,13 +3,13 @@ use std::path::Path;
 use rmcp::model::{CallToolResult, ContentBlock};
 
 use crate::config::Config;
-use crate::litellm::ImageApiClient;
+use crate::image_api::ImageApiClient;
 
 use super::ImageParams;
 
 /// Runs the `edit` (prompt-driven image editing) tool: resolves params
 /// against `edit_defaults`, reads the required input image(s) from disk
-/// via `input_path`, calls LiteLLM's `/v1/images/edits`, and writes the
+/// via `input_path`, calls the image API's `/v1/images/edits`, and writes the
 /// result(s) to `output_path`.
 pub async fn run(config: &Config, client: &ImageApiClient, params: ImageParams) -> CallToolResult {
     let has_input_path = params.input_path.as_ref().is_some_and(|v| !v.is_empty());
@@ -78,7 +78,7 @@ pub async fn run(config: &Config, client: &ImageApiClient, params: ImageParams) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Format, ImageDefaults, LiteLlmConfig};
+    use crate::config::{Format, ImageApiConfig, ImageDefaults};
     use base64::Engine as _;
 
     fn sample_config() -> Config {
@@ -87,7 +87,7 @@ mod tests {
 
     fn config_for_base_url(base_url: &str) -> Config {
         Config {
-            lite_llm: LiteLlmConfig {
+            image_api: ImageApiConfig {
                 base_url: base_url.to_string(),
                 api_key: "test-key".to_string(),
                 request_timeout_secs: None,
@@ -123,7 +123,7 @@ mod tests {
     #[tokio::test]
     async fn missing_input_path_parameter_returns_error() {
         let config = sample_config();
-        let client = ImageApiClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.image_api);
 
         let result = run(&config, &client, sample_params(None)).await;
         assert_eq!(result.is_error, Some(true));
@@ -139,7 +139,7 @@ mod tests {
     #[tokio::test]
     async fn empty_prompt_returns_validation_error_without_network_call() {
         let config = sample_config();
-        let client = ImageApiClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.image_api);
 
         let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create test dir");
@@ -177,7 +177,7 @@ mod tests {
             .await;
 
         let config = config_for_base_url(&mock_server.uri());
-        let client = ImageApiClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.image_api);
 
         let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create test dir");
@@ -203,7 +203,7 @@ mod tests {
     #[tokio::test]
     async fn input_path_nonexistent_file_returns_error() {
         let config = sample_config();
-        let client = ImageApiClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.image_api);
 
         let params = sample_params(Some(vec![
             "/tmp/definitely-does-not-exist-image-mcp.png".to_string(),
@@ -223,7 +223,7 @@ mod tests {
     #[tokio::test]
     async fn input_path_empty_file_content_returns_error() {
         let config = sample_config();
-        let client = ImageApiClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.image_api);
 
         let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create test dir");
@@ -247,7 +247,7 @@ mod tests {
     #[tokio::test]
     async fn input_path_symlink_returns_error() {
         let config = sample_config();
-        let client = ImageApiClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.image_api);
 
         let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create test dir");
@@ -273,7 +273,7 @@ mod tests {
     #[tokio::test]
     async fn input_path_with_dotdot_returns_error() {
         let config = sample_config();
-        let client = ImageApiClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.image_api);
 
         let params = sample_params(Some(vec!["../../../etc/passwd".to_string()]));
 
@@ -290,7 +290,7 @@ mod tests {
     #[tokio::test]
     async fn empty_input_path_list_returns_error() {
         let config = sample_config();
-        let client = ImageApiClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.image_api);
 
         let params = sample_params(Some(vec![]));
 
@@ -325,7 +325,7 @@ mod tests {
             .await;
 
         let config = config_for_base_url(&mock_server.uri());
-        let client = ImageApiClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.image_api);
 
         let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create test dir");
@@ -367,7 +367,7 @@ mod tests {
             .await;
 
         let config = config_for_base_url(&mock_server.uri());
-        let client = ImageApiClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.image_api);
 
         let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create test dir");
