@@ -727,7 +727,7 @@ dependencies = [
 
 [[package]]
 name = "image-mcp"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "base64",
  "dirs",
