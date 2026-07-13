@@ -1,4 +1,6 @@
 use serde::Deserialize;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 #[derive(
@@ -69,6 +71,8 @@ pub enum ConfigError {
     NoConfigDir,
     #[error("config file not found at {0}")]
     NotFound(PathBuf),
+    #[error("config file at {0} has insecure permissions ({1:#o}); expected 600")]
+    InsecurePermissions(PathBuf, u32),
     #[error("failed to read config file at {0}: {1}")]
     ReadFailed(PathBuf, std::io::Error),
     #[error("failed to parse config file at {0} as JSONC: {1}")]
@@ -92,6 +96,24 @@ pub fn load_config() -> Result<Config, ConfigError> {
     let path = config_path()?;
     if !path.exists() {
         return Err(ConfigError::NotFound(path));
+    }
+    #[cfg(unix)]
+    {
+        let metadata =
+            std::fs::metadata(&path).map_err(|e| ConfigError::ReadFailed(path.clone(), e))?;
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode != 0o600 {
+            return Err(ConfigError::InsecurePermissions(path, mode));
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tracing::warn!(
+            "config file \"{}\" permissions cannot be verified on {}; \
+             please ensure the file is not accessible by unauthorized users",
+            path.display(),
+            std::env::consts::OS,
+        );
     }
     let contents =
         std::fs::read_to_string(&path).map_err(|e| ConfigError::ReadFailed(path.clone(), e))?;
