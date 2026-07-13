@@ -5,21 +5,21 @@ use crate::config::LiteLlmConfig;
 use crate::tools::ResolvedParams;
 
 #[derive(Debug, thiserror::Error)]
-pub enum LiteLlmError {
-    #[error("failed to reach LiteLLM at {url}: {source}")]
+pub enum ImageApiError {
+    #[error("image API request failed at {url}: {source}")]
     Request {
         url: String,
         #[source]
         source: reqwest::Error,
     },
-    #[error("LiteLLM returned {status}: {body}")]
+    #[error("image API returned {status}: {body}")]
     Api {
         status: reqwest::StatusCode,
         body: String,
     },
-    #[error("failed to parse LiteLLM response: {0}")]
+    #[error("failed to parse image API response: {0}")]
     InvalidResponse(#[from] serde_json::Error),
-    #[error("LiteLLM response contained no image data")]
+    #[error("image API response contained no image data")]
     EmptyResponse,
 }
 
@@ -33,13 +33,13 @@ struct ImageDatum {
     b64_json: Option<String>,
 }
 
-pub struct LiteLlmClient {
+pub struct ImageApiClient {
     http: reqwest::Client,
     base_url: String,
     api_key: String,
 }
 
-impl LiteLlmClient {
+impl ImageApiClient {
     pub fn new(config: &LiteLlmConfig) -> Self {
         let http = reqwest::Client::builder()
             .timeout(config.request_timeout())
@@ -53,7 +53,7 @@ impl LiteLlmClient {
     }
 
     /// `POST /v1/images/generations` — JSON body, used by the `create` tool.
-    pub async fn generate(&self, params: &ResolvedParams) -> Result<Vec<String>, LiteLlmError> {
+    pub async fn generate(&self, params: &ResolvedParams) -> Result<Vec<String>, ImageApiError> {
         let url = format!("{}/v1/images/generations", self.base_url);
         let body = json!({
             "prompt": params.prompt,
@@ -71,7 +71,7 @@ impl LiteLlmClient {
             .json(&body)
             .send()
             .await
-            .map_err(|source| LiteLlmError::Request {
+            .map_err(|source| ImageApiError::Request {
                 url: url.clone(),
                 source,
             })?;
@@ -94,7 +94,7 @@ impl LiteLlmClient {
         &self,
         params: &ResolvedParams,
         images: Vec<Vec<u8>>,
-    ) -> Result<Vec<String>, LiteLlmError> {
+    ) -> Result<Vec<String>, ImageApiError> {
         let url = format!("{}/v1/images/edits", self.base_url);
 
         let mut form = reqwest::multipart::Form::new()
@@ -120,7 +120,7 @@ impl LiteLlmClient {
             .multipart(form)
             .send()
             .await
-            .map_err(|source| LiteLlmError::Request {
+            .map_err(|source| ImageApiError::Request {
                 url: url.clone(),
                 source,
             })?;
@@ -130,19 +130,19 @@ impl LiteLlmClient {
 
     async fn parse_images_response(
         response: reqwest::Response,
-    ) -> Result<Vec<String>, LiteLlmError> {
+    ) -> Result<Vec<String>, ImageApiError> {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
-            return Err(LiteLlmError::Api { status, body });
+            return Err(ImageApiError::Api { status, body });
         }
 
         let parsed: ImagesApiResponse = serde_json::from_str(&body)?;
         let images: Vec<String> = parsed.data.into_iter().filter_map(|d| d.b64_json).collect();
 
         if images.is_empty() {
-            return Err(LiteLlmError::EmptyResponse);
+            return Err(ImageApiError::EmptyResponse);
         }
 
         Ok(images)
@@ -240,7 +240,7 @@ mod tests {
             api_key: "super-secret-key".to_string(),
             request_timeout_secs: None,
         };
-        let client = LiteLlmClient::new(&config);
+        let client = ImageApiClient::new(&config);
         assert_eq!(client.api_key, "super-secret-key");
     }
 
@@ -290,13 +290,13 @@ mod integration_tests {
         }
     }
 
-    fn client_for(mock_server: &MockServer) -> LiteLlmClient {
+    fn client_for(mock_server: &MockServer) -> ImageApiClient {
         let config = LiteLlmConfig {
             base_url: mock_server.uri(),
             api_key: "test-api-key".to_string(),
             request_timeout_secs: None,
         };
-        LiteLlmClient::new(&config)
+        ImageApiClient::new(&config)
     }
 
     #[tokio::test]
@@ -383,11 +383,11 @@ mod integration_tests {
         let err = client.generate(&sample_params()).await.unwrap_err();
 
         match err {
-            LiteLlmError::Api { status, body } => {
+            ImageApiError::Api { status, body } => {
                 assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
                 assert!(body.contains("Unknown parameter"));
             }
-            other => panic!("expected LiteLlmError::Api, got {other:?}"),
+            other => panic!("expected ImageApiError::Api, got {other:?}"),
         }
     }
 
@@ -404,7 +404,7 @@ mod integration_tests {
         let client = client_for(&mock_server);
         let err = client.generate(&sample_params()).await.unwrap_err();
 
-        assert!(matches!(err, LiteLlmError::InvalidResponse(_)));
+        assert!(matches!(err, ImageApiError::InvalidResponse(_)));
     }
 
     #[tokio::test]
@@ -420,7 +420,7 @@ mod integration_tests {
         let client = client_for(&mock_server);
         let err = client.generate(&sample_params()).await.unwrap_err();
 
-        assert!(matches!(err, LiteLlmError::EmptyResponse));
+        assert!(matches!(err, ImageApiError::EmptyResponse));
     }
 
     #[tokio::test]
@@ -438,7 +438,7 @@ mod integration_tests {
         let client = client_for(&mock_server);
         let err = client.generate(&sample_params()).await.unwrap_err();
 
-        assert!(matches!(err, LiteLlmError::EmptyResponse));
+        assert!(matches!(err, ImageApiError::EmptyResponse));
     }
 
     #[tokio::test]
@@ -550,11 +550,11 @@ mod integration_tests {
             .unwrap_err();
 
         match err {
-            LiteLlmError::Api { status, body } => {
+            ImageApiError::Api { status, body } => {
                 assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
                 assert!(body.contains("response_format"));
             }
-            other => panic!("expected LiteLlmError::Api, got {other:?}"),
+            other => panic!("expected ImageApiError::Api, got {other:?}"),
         }
     }
 
@@ -574,13 +574,13 @@ mod integration_tests {
             api_key: "test-api-key".to_string(),
             request_timeout_secs: None,
         };
-        let client = LiteLlmClient::new(&config);
+        let client = ImageApiClient::new(&config);
 
         let result = client.generate(&sample_params()).await;
         let err = result.expect_err("expected request to fail against an unbound port");
         assert!(
-            matches!(err, LiteLlmError::Request { .. }),
-            "expected LiteLlmError::Request, got: {err:?}"
+            matches!(err, ImageApiError::Request { .. }),
+            "expected ImageApiError::Request, got: {err:?}"
         );
     }
 }

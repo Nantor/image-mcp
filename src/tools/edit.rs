@@ -1,7 +1,9 @@
+use std::path::Path;
+
 use rmcp::model::{CallToolResult, ContentBlock};
 
 use crate::config::Config;
-use crate::litellm::LiteLlmClient;
+use crate::litellm::ImageApiClient;
 
 use super::ImageParams;
 
@@ -9,7 +11,7 @@ use super::ImageParams;
 /// against `edit_defaults`, reads the required input image(s) from disk
 /// via `input_path`, calls LiteLLM's `/v1/images/edits`, and writes the
 /// result(s) to `output_path`.
-pub async fn run(config: &Config, client: &LiteLlmClient, params: ImageParams) -> CallToolResult {
+pub async fn run(config: &Config, client: &ImageApiClient, params: ImageParams) -> CallToolResult {
     let has_input_path = params.input_path.as_ref().is_some_and(|v| !v.is_empty());
 
     if !has_input_path {
@@ -21,6 +23,25 @@ pub async fn run(config: &Config, client: &LiteLlmClient, params: ImageParams) -
     let paths = params.input_path.clone().unwrap_or_default();
     let mut image_bytes_list = Vec::with_capacity(paths.len());
     for path in &paths {
+        let p = Path::new(path);
+        match p.symlink_metadata() {
+            Ok(meta) if meta.is_symlink() => {
+                return CallToolResult::error(vec![ContentBlock::text(format!(
+                    "`input_path` entry {path:?} is a symlink; symlinks are not allowed for security reasons"
+                ))]);
+            }
+            Err(err) => {
+                return CallToolResult::error(vec![ContentBlock::text(format!(
+                    "failed to check `input_path` entry {path:?}: {err}"
+                ))]);
+            }
+            Ok(_) => {}
+        }
+        if path.contains("..") {
+            return CallToolResult::error(vec![ContentBlock::text(format!(
+                "`input_path` entry {path:?} contains '..'; path traversal is not allowed"
+            ))]);
+        }
         match std::fs::read(path) {
             Ok(bytes) => {
                 if bytes.is_empty() {
@@ -102,7 +123,7 @@ mod tests {
     #[tokio::test]
     async fn missing_input_path_parameter_returns_error() {
         let config = sample_config();
-        let client = LiteLlmClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.lite_llm);
 
         let result = run(&config, &client, sample_params(None)).await;
         assert_eq!(result.is_error, Some(true));
@@ -118,7 +139,7 @@ mod tests {
     #[tokio::test]
     async fn empty_prompt_returns_validation_error_without_network_call() {
         let config = sample_config();
-        let client = LiteLlmClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.lite_llm);
 
         let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create test dir");
@@ -143,7 +164,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn litellm_api_error_surfaces_as_edit_failed() {
+    async fn image_api_error_surfaces_as_edit_failed() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -156,7 +177,7 @@ mod tests {
             .await;
 
         let config = config_for_base_url(&mock_server.uri());
-        let client = LiteLlmClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.lite_llm);
 
         let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create test dir");
@@ -182,7 +203,7 @@ mod tests {
     #[tokio::test]
     async fn input_path_nonexistent_file_returns_error() {
         let config = sample_config();
-        let client = LiteLlmClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.lite_llm);
 
         let params = sample_params(Some(vec![
             "/tmp/definitely-does-not-exist-image-mcp.png".to_string(),
@@ -196,13 +217,13 @@ mod tests {
             ContentBlock::Text(t) => t.text.clone(),
             _ => panic!("expected text block"),
         };
-        assert!(text.contains("failed to read `input_path` entry"));
+        assert!(text.contains("failed to check `input_path` entry"));
     }
 
     #[tokio::test]
-    async fn input_path_empty_file_returns_error() {
+    async fn input_path_empty_file_content_returns_error() {
         let config = sample_config();
-        let client = LiteLlmClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.lite_llm);
 
         let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create test dir");
@@ -224,9 +245,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn input_path_symlink_returns_error() {
+        let config = sample_config();
+        let client = ImageApiClient::new(&config.lite_llm);
+
+        let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        let real_file = dir.join("real.png");
+        std::fs::write(&real_file, b"fake-png-data").expect("write real file");
+        let symlink_file = dir.join("link.png");
+        std::os::unix::fs::symlink(&real_file, &symlink_file).expect("create symlink");
+
+        let params = sample_params(Some(vec![symlink_file.display().to_string()]));
+
+        let result = run(&config, &client, params).await;
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(result.is_error, Some(true));
+        let content = &result.content[0];
+        let text = match content {
+            ContentBlock::Text(t) => t.text.clone(),
+            _ => panic!("expected text block"),
+        };
+        assert!(text.contains("symlink"));
+    }
+
+    #[tokio::test]
+    async fn input_path_with_dotdot_returns_error() {
+        let config = sample_config();
+        let client = ImageApiClient::new(&config.lite_llm);
+
+        let params = sample_params(Some(vec!["../../../etc/passwd".to_string()]));
+
+        let result = run(&config, &client, params).await;
+        assert_eq!(result.is_error, Some(true));
+        let content = &result.content[0];
+        let text = match content {
+            ContentBlock::Text(t) => t.text.clone(),
+            _ => panic!("expected text block"),
+        };
+        assert!(text.contains(".."));
+    }
+
+    #[tokio::test]
     async fn empty_input_path_list_returns_error() {
         let config = sample_config();
-        let client = LiteLlmClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.lite_llm);
 
         let params = sample_params(Some(vec![]));
 
@@ -261,7 +325,7 @@ mod tests {
             .await;
 
         let config = config_for_base_url(&mock_server.uri());
-        let client = LiteLlmClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.lite_llm);
 
         let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create test dir");
@@ -303,7 +367,7 @@ mod tests {
             .await;
 
         let config = config_for_base_url(&mock_server.uri());
-        let client = LiteLlmClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.lite_llm);
 
         let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create test dir");

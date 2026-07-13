@@ -1,14 +1,14 @@
 use rmcp::model::{CallToolResult, ContentBlock};
 
 use crate::config::Config;
-use crate::litellm::LiteLlmClient;
+use crate::litellm::ImageApiClient;
 
 use super::ImageParams;
 
 /// Runs the `create` (text-to-image) tool: resolves params against
 /// `create_defaults`, calls LiteLLM's `/v1/images/generations`, and returns
 /// either an inline image block or a saved file path per `save`.
-pub async fn run(config: &Config, client: &LiteLlmClient, params: ImageParams) -> CallToolResult {
+pub async fn run(config: &Config, client: &ImageApiClient, params: ImageParams) -> CallToolResult {
     let resolved = params.resolve(&config.create_defaults);
 
     if let Err(err) = resolved.validate() {
@@ -72,7 +72,7 @@ mod tests {
     #[tokio::test]
     async fn empty_prompt_returns_validation_error_without_network_call() {
         let config = config_for_base_url("http://localhost:4000");
-        let client = LiteLlmClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.lite_llm);
 
         let result = run(&config, &client, sample_params("   ", "/tmp/out.png")).await;
         assert_eq!(result.is_error, Some(true));
@@ -88,7 +88,7 @@ mod tests {
     #[tokio::test]
     async fn invalid_size_returns_validation_error() {
         let config = config_for_base_url("http://localhost:4000");
-        let client = LiteLlmClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.lite_llm);
 
         let mut params = sample_params("a red bicycle", "/tmp/out.png");
         params.size = Some("not-a-size".to_string());
@@ -105,7 +105,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn litellm_api_error_surfaces_as_create_failed() {
+    async fn image_api_error_surfaces_as_create_failed() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -118,7 +118,7 @@ mod tests {
             .await;
 
         let config = config_for_base_url(&mock_server.uri());
-        let client = LiteLlmClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.lite_llm);
 
         let result = run(
             &config,
@@ -156,7 +156,7 @@ mod tests {
             .await;
 
         let config = config_for_base_url(&mock_server.uri());
-        let client = LiteLlmClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.lite_llm);
 
         let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
         let target = dir.join("bicycle.png");

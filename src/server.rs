@@ -6,20 +6,20 @@ use rmcp::model::{
 use rmcp::{ErrorData as McpError, ServerHandler, tool, tool_handler, tool_router};
 
 use crate::config::Config;
-use crate::litellm::LiteLlmClient;
+use crate::litellm::ImageApiClient;
 use crate::tools::{ImageParams, create, edit, list_models};
 
 #[derive(Clone)]
 pub struct ImageMcpServer {
     config: std::sync::Arc<Config>,
-    client: std::sync::Arc<LiteLlmClient>,
+    client: std::sync::Arc<ImageApiClient>,
     tool_router: ToolRouter<Self>,
 }
 
 #[tool_router]
 impl ImageMcpServer {
     pub fn new(config: Config) -> Self {
-        let client = LiteLlmClient::new(&config.lite_llm);
+        let client = ImageApiClient::new(&config.lite_llm);
         Self {
             config: std::sync::Arc::new(config),
             client: std::sync::Arc::new(client),
