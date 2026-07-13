@@ -175,7 +175,7 @@ The test suite documents the contract this server aims to provide. Some notable 
 - **Config validation** – `validate_config_*` tests in `src/config.rs` cover `image_models`, default models, `n`, and `size`.
 - **Parameter validation** – `validate_*` tests in `src/tools/mod.rs` enforce non-empty `prompt`, `n >= 1`, valid `size` shape, and non-empty `output_path`.
 - **MCP surface** – tests in `src/server.rs` (`get_info_advertises_tools_and_instructions`, `create_tool_surfaces_validation_error`, `edit_tool_surfaces_missing_image_error`) ensure the advertised tools and their error behavior match what MCP clients see.
-- **HTTP behavior** – unit and integration tests in `src/litellm.rs` (`generate_returns_decoded_images_on_success`, error-path tests, and `normalize_base_url` / `sniff_image_type` tests) exercise the HTTP contract with the upstream image API.
+- **HTTP behavior** – unit and integration tests in `src/image_api.rs` (`generate_returns_decoded_images_on_success`, error-path tests, and `normalize_base_url` / `sniff_image_type` tests) exercise the HTTP contract with the upstream image API.
 
 If you are unsure how a particular edge case behaves, searching for the corresponding test is a good starting point.
 
@@ -203,6 +203,6 @@ cargo fmt --all -- --check
 | `src/tools/edit.rs` | Implementation of the `edit` tool, handling input images and calling the upstream image API's `/v1/images/edits` endpoint |
 | `src/tools/list_models.rs` | Implementation of `list_models`, returning configured models only |
 | `src/image_store.rs` | Base64 decoding, lightweight format checking, and filesystem writes for images |
-| `src/litellm.rs` | HTTP client for the upstream OpenAI-compatible image API: base URL normalization, request construction, and response parsing |
+| `src/image_api.rs` | HTTP client for the upstream OpenAI-compatible image API: base URL normalization, request construction, and response parsing |
 
 See `PLAN.md` for the complete design spec.

@@ -11,7 +11,7 @@
 - Single binary crate: `src/main.rs` initializes `tracing`, loads config, and serves the MCP server over stdio.
 - `src/server.rs` is the wiring hub: the only exposed tools are `create`, `edit`, and `list_models`.
 - `src/tools/mod.rs` is the shared contract layer: `ImageParams`, config-default resolution, and the shared response path that writes images to disk and returns their filenames live there.
-- `src/litellm.rs` owns all HTTP behavior for the upstream OpenAI-compatible image API.
+- `src/image_api.rs` owns all HTTP behavior for the upstream OpenAI-compatible image API.
 
 ## Gotchas
 

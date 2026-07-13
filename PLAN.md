@@ -128,7 +128,7 @@ image-mcp/
 │   ├── main.rs          # entrypoint: load config, init tracing, serve stdio
 │   ├── config.rs        # JSONC config loading + structs
 │   ├── server.rs        # ImageMcpServer: rmcp tool_router wiring for create/edit/list_models
-│   ├── litellm.rs        # reqwest client: generate() [JSON], edit() [multipart], shared b64_json response parsing
+│   ├── image_api.rs        # reqwest client: generate() [JSON], edit() [multipart], shared b64_json response parsing
 │   ├── tools/
 │   │   ├── mod.rs        # ImageParams/ResolvedParams, validation, shared respond_with_images
 │   │   ├── create.rs     # `create` tool impl
