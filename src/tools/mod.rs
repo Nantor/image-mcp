@@ -123,6 +123,7 @@ pub fn respond_with_images(
         match image_store::save_image(&b64_data, format, &target) {
             Ok(path) => content.push(ContentBlock::text(path.display().to_string())),
             Err(err) => {
+                tracing::error!("failed to save image to {}: {}", target.display(), err);
                 return CallToolResult::error(vec![ContentBlock::text(format!(
                     "failed to save image: {err}"
                 ))]);

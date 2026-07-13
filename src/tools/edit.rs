@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use rmcp::model::{CallToolResult, ContentBlock};
+use tracing;
 
 use crate::config::Config;
 use crate::image_api::ImageApiClient;
@@ -15,6 +16,7 @@ pub async fn run(config: &Config, client: &ImageApiClient, params: ImageParams) 
     let has_input_path = params.input_path.as_ref().is_some_and(|v| !v.is_empty());
 
     if !has_input_path {
+        tracing::warn!("edit called without input_path parameter");
         return CallToolResult::error(vec![ContentBlock::text(
             "edit requires an `input_path` parameter (at least one path to an input image file)",
         )]);
@@ -26,11 +28,16 @@ pub async fn run(config: &Config, client: &ImageApiClient, params: ImageParams) 
         let p = Path::new(path);
         match p.symlink_metadata() {
             Ok(meta) if meta.is_symlink() => {
+                tracing::warn!(
+                    "edit input_path entry {} is a symlink; symlinks are not allowed",
+                    path
+                );
                 return CallToolResult::error(vec![ContentBlock::text(format!(
                     "`input_path` entry {path:?} is a symlink; symlinks are not allowed for security reasons"
                 ))]);
             }
             Err(err) => {
+                tracing::error!("edit failed to check input_path entry {}: {}", path, err);
                 return CallToolResult::error(vec![ContentBlock::text(format!(
                     "failed to check `input_path` entry {path:?}: {err}"
                 ))]);
@@ -38,6 +45,10 @@ pub async fn run(config: &Config, client: &ImageApiClient, params: ImageParams) 
             Ok(_) => {}
         }
         if path.contains("..") {
+            tracing::warn!(
+                "edit input_path entry {} contains '..'; path traversal blocked",
+                path
+            );
             return CallToolResult::error(vec![ContentBlock::text(format!(
                 "`input_path` entry {path:?} contains '..'; path traversal is not allowed"
             ))]);
@@ -45,6 +56,7 @@ pub async fn run(config: &Config, client: &ImageApiClient, params: ImageParams) 
         match std::fs::read(path) {
             Ok(bytes) => {
                 if bytes.is_empty() {
+                    tracing::warn!("edit input_path entry {} is empty", path);
                     return CallToolResult::error(vec![ContentBlock::text(format!(
                         "`input_path` entry {path:?} is empty; provide a valid image file"
                     ))]);
@@ -52,6 +64,7 @@ pub async fn run(config: &Config, client: &ImageApiClient, params: ImageParams) 
                 image_bytes_list.push(bytes);
             }
             Err(err) => {
+                tracing::error!("edit failed to read input_path entry {}: {}", path, err);
                 return CallToolResult::error(vec![ContentBlock::text(format!(
                     "failed to read `input_path` entry {path:?}: {err}"
                 ))]);
@@ -62,12 +75,14 @@ pub async fn run(config: &Config, client: &ImageApiClient, params: ImageParams) 
     let resolved = params.resolve(&config.edit_defaults);
 
     if let Err(err) = resolved.validate() {
+        tracing::warn!("edit validation error: {}", err);
         return CallToolResult::error(vec![ContentBlock::text(err)]);
     }
 
     let images = match client.edit(&resolved, image_bytes_list).await {
         Ok(images) => images,
         Err(err) => {
+            tracing::error!("edit API error on model={}: {}", resolved.model, err);
             return CallToolResult::error(vec![ContentBlock::text(format!("edit failed: {err}"))]);
         }
     };

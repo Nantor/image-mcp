@@ -1,4 +1,5 @@
 use rmcp::model::{CallToolResult, ContentBlock};
+use tracing;
 
 use crate::config::Config;
 use crate::image_api::ImageApiClient;
@@ -12,12 +13,14 @@ pub async fn run(config: &Config, client: &ImageApiClient, params: ImageParams) 
     let resolved = params.resolve(&config.create_defaults);
 
     if let Err(err) = resolved.validate() {
+        tracing::warn!("create validation error: {}", err);
         return CallToolResult::error(vec![ContentBlock::text(err)]);
     }
 
     let images = match client.generate(&resolved).await {
         Ok(images) => images,
         Err(err) => {
+            tracing::error!("create API error on model={}: {}", resolved.model, err);
             return CallToolResult::error(vec![ContentBlock::text(format!(
                 "create failed: {err}"
             ))]);
