@@ -352,15 +352,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn successful_edit_with_multiple_input_paths_sends_all_images() {
+    async fn edit_with_multiple_input_paths_wrong_format_fails() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let mock_server = MockServer::start().await;
+        let resp_b64 =
+            base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n\x1a\nfake-png");
+
         Mock::given(method("POST"))
             .and(path("/v1/images/edits"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "data": [{ "b64_json": "ZWRpdGVk" }],
+                "data": [{ "b64_json": resp_b64 }],
             })))
             .expect(1)
             .mount(&mock_server)
@@ -387,5 +390,48 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
 
         assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn successful_edit_with_multiple_input_paths_sends_all_images() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        let resp_b64 =
+            base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n\x1a\nedited-png-data");
+
+        Mock::given(method("POST"))
+            .and(path("/v1/images/edits"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{ "b64_json": resp_b64 }],
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let config = config_for_base_url(&mock_server.uri());
+        let client = ImageApiClient::new(&config.image_api);
+
+        let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        let mut paths = Vec::new();
+        for name in ["a.png", "b.png"] {
+            let file = dir.join(name);
+            let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+            bytes.extend_from_slice(b"rest-of-file");
+            std::fs::write(&file, &bytes).expect("write input file");
+            paths.push(file.display().to_string());
+        }
+
+        let mut params = sample_params(Some(paths));
+        params.format = Some(Format::Png);
+        let target = dir.join("output.png");
+        params.output_path = target.display().to_string();
+
+        let result = run(&config, &client, params).await;
+
+        assert_eq!(result.is_error, Some(false));
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
