@@ -44,7 +44,15 @@ pub async fn run(config: &Config, client: &ImageApiClient, params: ImageParams) 
             }
             Ok(_) => {}
         }
-        if path.contains("..") {
+        let is_traversal = path.contains("/../")
+            || path.contains("\\..")
+            || path.contains("/..")
+            || path.contains("\\..")
+            || (path.starts_with("..") && path.len() > 2 && {
+                let second = path.as_bytes()[1];
+                second == b'/' || second == b'\\'
+            });
+        if is_traversal {
             tracing::warn!(
                 "edit input_path entry {} contains '..'; path traversal blocked",
                 path
@@ -300,6 +308,38 @@ mod tests {
             _ => panic!("expected text block"),
         };
         assert!(text.contains(".."));
+    }
+
+    #[tokio::test]
+    async fn input_path_with_legitimate_dotdot_in_filename_is_not_blocked() {
+        let config = sample_config();
+        let client = ImageApiClient::new(&config.image_api);
+
+        let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        let file = dir.join("my..config.png");
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend_from_slice(b"rest-of-file");
+        std::fs::write(&file, &bytes).expect("write input file");
+
+        let mut params = sample_params(Some(vec![file.display().to_string()]));
+        params.prompt = "test".to_string();
+        params.output_path = dir.join("out.png").display().to_string();
+
+        let result = run(&config, &client, params).await;
+        std::fs::remove_dir_all(&dir).ok();
+
+        // Not an error for traversal; fails at HTTP layer as expected
+        assert_eq!(result.is_error, Some(true));
+        let content = &result.content[0];
+        let text = match content {
+            ContentBlock::Text(t) => t.text.clone(),
+            _ => panic!("expected text block"),
+        };
+        assert!(
+            !text.contains("path traversal"),
+            "legitimate filename with '..' was incorrectly blocked as path traversal"
+        );
     }
 
     #[tokio::test]
