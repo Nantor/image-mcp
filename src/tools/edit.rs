@@ -431,6 +431,12 @@ mod tests {
         let result = run(&config, &client, params).await;
 
         assert_eq!(result.is_error, Some(false));
+        assert_eq!(result.content.len(), 1);
+        let path = match &result.content[0] {
+            ContentBlock::Text(t) => t.text.clone(),
+            _ => panic!("expected text block"),
+        };
+        assert_eq!(std::path::PathBuf::from(&path), target);
 
         std::fs::remove_dir_all(&dir).ok();
     }
