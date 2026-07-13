@@ -155,6 +155,25 @@ image-mcp/
   - asset uploads use `gh release upload --clobber`
 - The Linux `aarch64-unknown-linux-gnu` release build requires `gcc-aarch64-linux-gnu` as the linker on GitHub-hosted Ubuntu runners.
 
+## Security posture
+
+`input_path` and `output_path` accept arbitrary filesystem paths — no
+allow-listed root directory, no chroot, no sandbox. Symlinks are rejected
+and `..` traversal is blocked, but an absolute path anywhere on the
+filesystem (or relative to the working directory) is accepted. This
+means:
+
+* A compromised or untrusted calling LLM can read any file readable by the
+  process and exfiltrate it to the configured upstream image API via
+  `input_path`.
+* A compromised or untrusted calling LLM can overwrite any file writable
+  by the process via `output_path`.
+
+This is an **accepted risk**. The threat model assumes the calling LLM is
+either trusted or already controls the MCP host — it does not assume a
+malicious LLM. If this changes, path restriction (e.g. chroot or
+allow-listed root) must be added before release in untrusted environments.
+
 ## Validated behavior
 
 All items originally flagged for validation during implementation have

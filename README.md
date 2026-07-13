@@ -85,6 +85,13 @@ Common fields:
 - `output_path` (string, required) – where to write the resulting image(s).
 - `input_path` (string[]; edit only) – one or more on-disk paths to input images.
 
+Neither `input_path` nor `output_path` enforces an allow-listed root or
+sandbox — they accept any filesystem path. Symlinks and `..` traversal are
+rejected. This means an untrusted or compromised calling LLM can read any
+file readable by the process (via `input_path`) or overwrite any writable
+file (via `output_path`). This is an accepted risk under the assumption
+that the calling LLM is trusted. See `PLAN.md` for details.
+
 The `ImageParams::resolve` tests (`resolve_all_defaults`, `resolve_all_overrides`, `resolve_partial_override`) in `src/tools/mod.rs` document how these optional fields merge with the configured defaults.
 
 ### `create`: text-to-image
