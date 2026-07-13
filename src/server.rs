@@ -146,6 +146,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_tool_surfaces_output_path_validation_error() {
+        let server = ImageMcpServer::new(sample_config());
+        let params = Parameters(ImageParams {
+            prompt: "a prompt".to_string(),
+            model: None,
+            n: None,
+            size: None,
+            format: None,
+            input_path: None,
+            output_path: "".to_string(),
+        });
+
+        let result = server
+            .create(params)
+            .await
+            .expect("create should return a CallToolResult, not an McpError");
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
     async fn edit_tool_surfaces_missing_image_error() {
         let server = ImageMcpServer::new(sample_config());
         let params = Parameters(ImageParams {
