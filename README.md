@@ -179,6 +179,10 @@ The test suite documents the contract this server aims to provide. Some notable 
 
 If you are unsure how a particular edge case behaves, searching for the corresponding test is a good starting point.
 
+## Manual Tests
+
+The `docs/manual-tests/` directory contains ad-hoc test session documentation — markdown write-ups with generated PNG captures (Gemini and GPT model families, ~30 MB total across 19 PNGs). These are manual, non-automated records of exploratory sessions and are not run by CI.
+
 ## Building & Testing
 
 ```bash

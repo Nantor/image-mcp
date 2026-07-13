@@ -26,6 +26,11 @@
 - Both tools require `output_path` (an exact destination file path) and always write image data to disk — there is no inline MCP `image` content block and no `save`/`save_path` toggle.
 - `output_path`'s extension is appended if missing. With `n > 1`, every generated image gets a `-1`, `-2`, ... suffix inserted before the extension (1-based); with exactly one image, the exact requested path is used as-is.
 
+## Manual Tests
+
+- `docs/manual-tests/` contains ad-hoc test session documentation (markdown + PNG output). These are manual, non-automated, and not run by CI.
+- `docs/manual-tests/images/` holds the ~30 MB of PNG capture files (19 PNGs across Gemini and GPT model families).
+
 ## Repo Notes
 
 - `PLAN.md` is still the design spec; update it when implementation behavior changes.
