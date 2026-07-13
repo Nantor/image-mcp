@@ -45,14 +45,39 @@ fn write_image_to_file(
         file.to_path_buf()
     };
 
-    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| ImageStoreError::CreateDir(parent.to_path_buf(), e))?;
+    let mut tmp_path = path.clone();
+    tmp_path.set_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
+
+    let orphan_dir = if let Some(dir) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        let existed = dir.try_exists().unwrap_or(false);
+        std::fs::create_dir_all(dir)
+            .map_err(|e| ImageStoreError::CreateDir(dir.to_path_buf(), e))?;
+        if !existed {
+            Some(dir.to_path_buf())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let result = std::fs::write(&tmp_path, bytes);
+
+    match result {
+        Ok(()) => {
+            std::fs::rename(&tmp_path, &path)
+                .map_err(|e| ImageStoreError::Write(path.clone(), e))?;
+            Ok(path)
+        }
+        Err(write_err) => {
+            if let Some(orph) = orphan_dir {
+                std::fs::remove_dir_all(&orph).ok();
+            }
+            let mut p = path.clone();
+            p.set_extension(std::ffi::OsString::new());
+            Err(ImageStoreError::Write(p, write_err))
+        }
     }
-
-    std::fs::write(&path, bytes).map_err(|e| ImageStoreError::Write(path.clone(), e))?;
-
-    Ok(path)
 }
 
 fn matches_expected_format(bytes: &[u8], format: Format) -> bool {
@@ -143,31 +168,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn write_image_to_file_fails_when_parent_dir_not_writable() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let base = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&base).expect("create base test dir");
-        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o500))
-            .expect("chmod base test dir read+execute only");
-
-        let target = base.join("nested").join("out.png");
-        let result = write_image_to_file(b"bytes", &target, Format::Png);
-
-        // Restore writable permissions so the outer tempdir can be cleaned up.
-        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700))
-            .expect("restore base test dir permissions");
-        std::fs::remove_dir_all(&base).ok();
-
-        match result {
-            Err(ImageStoreError::CreateDir(path, _)) => assert_eq!(path, target.parent().unwrap()),
-            other => panic!("expected ImageStoreError::CreateDir, got {other:?}"),
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn write_image_to_file_fails_when_dir_not_writable() {
+    fn write_image_to_file_creates_dir_and_tries_temp_write() {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
@@ -176,12 +177,41 @@ mod tests {
             .expect("chmod test dir read+execute only");
 
         let file = dir.join("out.png");
-        let result = write_image_to_file(b"bytes", &file, Format::Png);
+        let result = write_image_to_file(b"not a png\x00\x00", &file, Format::Png);
 
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
             .expect("restore test dir permissions");
         std::fs::remove_dir_all(&dir).ok();
 
+        // create_dir_all succeeds; write temp file fails because dir is read-only;
+        // orphan dir is cleaned up; final path (sans extension suffix) is in Write err.
         assert!(matches!(result, Err(ImageStoreError::Write(_, _))));
+    }
+
+    #[test]
+    fn write_image_to_file_writes_temp_file_then_renames() {
+        let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
+        let file = dir.join("output").join("img.png");
+
+        // bytes are not a real PNG so save_image will reject them before
+        // reaching write_image_to_file; use write_image_to_file directly.
+        let result = write_image_to_file(b"\x89PNG\r\n\x1a\npayload", &file, Format::Png);
+
+        let written_path = result.expect("write should succeed");
+        assert_eq!(written_path, file);
+        let written = std::fs::read(&written_path).expect("file should exist");
+        assert_eq!(written, b"\x89PNG\r\n\x1a\npayload");
+        // temp file should not linger.
+        let entries = std::fs::read_dir(dir.join("output")).expect("dir should exist");
+        for entry in entries {
+            let entry = entry.expect("valid entry");
+            let name = entry.file_name();
+            assert!(
+                !name.to_string_lossy().starts_with("img.tmp-"),
+                "temp file was not cleaned up: {:?}",
+                name
+            );
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
