@@ -7,7 +7,9 @@ use rmcp::{ErrorData as McpError, ServerHandler, tool, tool_handler, tool_router
 
 use crate::config::Config;
 use crate::image_api::ImageApiClient;
-use crate::tools::{ImageParams, create, edit, list_models};
+use crate::tools::image_info::ImageInfoParams;
+use crate::tools::image_resize::ImageResizeParams;
+use crate::tools::{ImageParams, create, edit, image_info, image_resize, list_models};
 
 #[derive(Clone)]
 pub struct ImageMcpServer {
@@ -49,6 +51,26 @@ impl ImageMcpServer {
     fn list_models(&self) -> Result<CallToolResult, McpError> {
         Ok(list_models::run(&self.config))
     }
+
+    #[tool(
+        description = "Inspect an on-disk image file: reports its detected image type (png/jpg/webp), pixel dimensions (width/height), and file size in bytes. Read-only — never calls the upstream image API."
+    )]
+    fn image_info(
+        &self,
+        Parameters(params): Parameters<ImageInfoParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(image_info::run(params))
+    }
+
+    #[tool(
+        description = "Resize an on-disk image to an exact new WIDTHxHEIGHT size, stretching it if the aspect ratio differs (no cropping or letterboxing). Writes the result to `output_path`; defaults to the input image's own format unless `format` is given. Never calls the upstream image API."
+    )]
+    fn image_resize(
+        &self,
+        Parameters(params): Parameters<ImageResizeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(image_resize::run(params))
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -58,7 +80,7 @@ impl ServerHandler for ImageMcpServer {
             .with_server_info(Implementation::from_build_env())
             .with_protocol_version(ProtocolVersion::V_2024_11_05)
             .with_instructions(
-                "Image generation and editing backed by an OpenAI-compatible image API (or proxy). Tools: create (text-to-image), edit (prompt-driven image editing, no mask support), list_models (configured image models).".to_string(),
+                "Image generation and editing backed by an OpenAI-compatible image API (or proxy). Tools: create (text-to-image), edit (prompt-driven image editing, no mask support), list_models (configured image models), image_info (inspect an image's type/dimensions/size), image_resize (resize an image to an exact size).".to_string(),
             )
     }
 }

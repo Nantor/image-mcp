@@ -1,5 +1,6 @@
 mod config;
 mod image_api;
+mod image_ops;
 mod image_store;
 mod server;
 mod tools;

@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use rmcp::model::{CallToolResult, ContentBlock};
 use tracing;
 
@@ -25,57 +23,11 @@ pub async fn run(config: &Config, client: &ImageApiClient, params: ImageParams) 
     let paths = params.input_path.clone().unwrap_or_default();
     let mut image_bytes_list = Vec::with_capacity(paths.len());
     for path in &paths {
-        let p = Path::new(path);
-        match p.symlink_metadata() {
-            Ok(meta) if meta.is_symlink() => {
-                tracing::warn!(
-                    "edit input_path entry {} is a symlink; symlinks are not allowed",
-                    path
-                );
-                return CallToolResult::error(vec![ContentBlock::text(format!(
-                    "`input_path` entry {path:?} is a symlink; symlinks are not allowed for security reasons"
-                ))]);
-            }
+        match super::read_input_image(path) {
+            Ok(bytes) => image_bytes_list.push(bytes),
             Err(err) => {
-                tracing::error!("edit failed to check input_path entry {}: {}", path, err);
-                return CallToolResult::error(vec![ContentBlock::text(format!(
-                    "failed to check `input_path` entry {path:?}: {err}"
-                ))]);
-            }
-            Ok(_) => {}
-        }
-        let is_traversal = path.contains("/../")
-            || path.contains("\\..")
-            || path.contains("/..")
-            || path.contains("\\..")
-            || (path.starts_with("..") && path.len() > 2 && {
-                let second = path.as_bytes()[1];
-                second == b'/' || second == b'\\'
-            });
-        if is_traversal {
-            tracing::warn!(
-                "edit input_path entry {} contains '..'; path traversal blocked",
-                path
-            );
-            return CallToolResult::error(vec![ContentBlock::text(format!(
-                "`input_path` entry {path:?} contains '..'; path traversal is not allowed"
-            ))]);
-        }
-        match std::fs::read(path) {
-            Ok(bytes) => {
-                if bytes.is_empty() {
-                    tracing::warn!("edit input_path entry {} is empty", path);
-                    return CallToolResult::error(vec![ContentBlock::text(format!(
-                        "`input_path` entry {path:?} is empty; provide a valid image file"
-                    ))]);
-                }
-                image_bytes_list.push(bytes);
-            }
-            Err(err) => {
-                tracing::error!("edit failed to read input_path entry {}: {}", path, err);
-                return CallToolResult::error(vec![ContentBlock::text(format!(
-                    "failed to read `input_path` entry {path:?}: {err}"
-                ))]);
+                tracing::warn!("edit input_path entry {} rejected: {}", path, err);
+                return CallToolResult::error(vec![ContentBlock::text(err)]);
             }
         }
     }
@@ -267,6 +219,7 @@ mod tests {
         assert!(text.contains("is empty"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn input_path_symlink_returns_error() {
         let config = sample_config();

@@ -1,5 +1,7 @@
 pub mod create;
 pub mod edit;
+pub mod image_info;
+pub mod image_resize;
 pub mod list_models;
 
 use std::path::{Path, PathBuf};
@@ -91,15 +93,72 @@ impl ResolvedParams {
 /// This is a shape check only — the actual dimensions are still validated
 /// by the upstream model, since supported sizes vary per model.
 fn is_valid_size(size: &str) -> bool {
-    match size.split_once('x') {
-        Some((w, h)) => {
-            !w.is_empty()
-                && !h.is_empty()
-                && w.chars().all(|c| c.is_ascii_digit())
-                && h.chars().all(|c| c.is_ascii_digit())
+    parse_size(size).is_ok()
+}
+
+/// Parses a `WIDTHxHEIGHT` size string (e.g. `1024x1024`) into a
+/// `(width, height)` pair of pixel dimensions. Used by `image_resize`,
+/// which (unlike `create`/`edit`) needs the actual numeric dimensions
+/// rather than just a shape check.
+pub fn parse_size(size: &str) -> Result<(u32, u32), String> {
+    let invalid =
+        || format!("`size` must be in the form WIDTHxHEIGHT (e.g. \"1024x1024\"), got {size:?}");
+    let (w, h) = size.split_once('x').ok_or_else(invalid)?;
+    let width: u32 = w.parse().map_err(|_| invalid())?;
+    let height: u32 = h.parse().map_err(|_| invalid())?;
+    Ok((width, height))
+}
+
+/// Reads and validates a single on-disk image input path shared by the
+/// `edit`, `image_info`, and `image_resize` tools: rejects symlinks and
+/// `..` path traversal (paths may come from an untrusted caller), and
+/// errors if the file is missing, unreadable, or empty. Returns the raw
+/// file bytes on success.
+pub fn read_input_image(path: &str) -> Result<Vec<u8>, String> {
+    let p = Path::new(path);
+    match p.symlink_metadata() {
+        Ok(meta) if meta.is_symlink() => {
+            return Err(format!(
+                "`input_path` entry {path:?} is a symlink; symlinks are not allowed for security reasons"
+            ));
         }
-        None => false,
+        Err(err) => {
+            return Err(format!(
+                "failed to check `input_path` entry {path:?}: {err}"
+            ));
+        }
+        Ok(_) => {}
     }
+    if is_path_traversal(path) {
+        return Err(format!(
+            "`input_path` entry {path:?} contains '..'; path traversal is not allowed"
+        ));
+    }
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            if bytes.is_empty() {
+                return Err(format!(
+                    "`input_path` entry {path:?} is empty; provide a valid image file"
+                ));
+            }
+            Ok(bytes)
+        }
+        Err(err) => Err(format!("failed to read `input_path` entry {path:?}: {err}")),
+    }
+}
+
+/// Detects an obvious `..` path traversal attempt in a raw `input_path`
+/// string. Legitimate filenames that merely *contain* `..` (e.g.
+/// `my..config.png`) are not flagged.
+fn is_path_traversal(path: &str) -> bool {
+    path.contains("/../")
+        || path.contains("\\..")
+        || path.contains("/..")
+        || path.contains("\\..")
+        || (path.starts_with("..") && path.len() > 2 && {
+            let second = path.as_bytes()[1];
+            second == b'/' || second == b'\\'
+        })
 }
 
 /// Shared response handling for `create` and `edit`: writes each returned

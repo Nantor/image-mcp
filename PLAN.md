@@ -9,15 +9,21 @@ backed by an OpenAI-compatible image API (or proxy).
 - **edit** — prompt-driven image editing (no mask param; relies on
   prompt-native edit models like `gpt-image-1`)
 - **list_models** — returns the configured list of image-capable models
+- **image_info** — inspects an on-disk image file's detected type, pixel
+  dimensions, and file size; local-only, no upstream image API call
+- **image_resize** — resizes an on-disk image to an exact new
+  WIDTHxHEIGHT, stretching to fit (no cropping/letterboxing); local-only,
+  no upstream image API call
 
-Mask-based inpainting, image-to-image style transfer via reference image
-strength, and outpaint/crop/resize as distinct operations are explicitly
-**out of scope** — all covered by natural-language instructions inside
-`prompt` for `edit`, or dropped as unsupported.
+Mask-based inpainting and image-to-image style transfer via reference
+image strength are explicitly **out of scope** — covered by
+natural-language instructions inside `prompt` for `edit`, or dropped as
+unsupported. Outpaint/crop are also out of scope. Resizing is handled
+locally by `image_resize` rather than via the upstream image API.
 
 ## Tool schemas
 
-Both tools share one params struct:
+`create` and `edit` share one params struct:
 
 ```rust
 struct ImageParams {
@@ -46,6 +52,46 @@ struct ImageParams {
   `b64_json` data by default regardless.
 - `list_models` takes no input, returns `image_models` straight from config
   (no external image API call).
+
+`image_info` and `image_resize` are local-only tools built on the `image`
+crate (decode/resize/encode for png/jpg/webp) — they never call the
+upstream image API:
+
+```rust
+struct ImageInfoParams {
+    input_path: String, // on-disk image path, read from disk
+}
+
+struct ImageResizeParams {
+    input_path: String,      // on-disk input image path, read from disk
+    size: String,             // target WIDTHxHEIGHT, e.g. "512x512"
+    format: Option<Format>,   // defaults to the input image's own detected format
+    output_path: String,      // required filesystem path to write the resized image to
+}
+```
+
+- `image_info` reads `input_path` (same symlink/`..`-traversal rejection
+  and empty-file check as `edit`'s `input_path` entries, via a shared
+  helper), detects its format from magic bytes, reads its pixel
+  dimensions without fully decoding pixel data, and returns
+  `{format, width, height, size_bytes}` as JSON text.
+- `image_resize` reads and validates `input_path` the same way, detects
+  its format, decodes it, resizes to the exact `WIDTHxHEIGHT` from `size`
+  via `resize_exact` (Lanczos3 filter) — stretching the image if the
+  aspect ratio differs, never cropping or letterboxing — re-encodes to
+  `format` (defaulting to the input's own detected format), and writes
+  the result to `output_path` (extension appended if missing, same as
+  `create`/`edit`). Unlike `create`/`edit`, there is no `n` (always
+  exactly one output image) and no numbered-suffix behavior. Each
+  dimension in `size` must be between 1 and `MAX_DIMENSION` (8192)
+  pixels — a bound needed because, unlike `create`/`edit`'s `size` (a
+  string forwarded to the upstream API), `image_resize`'s `size` drives
+  a local, unbounded-by-default memory allocation and CPU-bound resample
+  in the `image` crate; without a cap, an oversized target (e.g.
+  `50000x50000`) is a local denial-of-service.
+- Both tools only support png/jpg/webp (the same three formats the
+  `image` crate is compiled with, matching `Format`); any other detected
+  format, or bytes that don't look like an image at all, is a tool error.
 
 ## Response shape
 
@@ -107,6 +153,10 @@ Per-call params in a tool invocation override the matching config default.
   `server`, `macros`, `transport-io` (stdio), `schemars` (for
   `JsonSchema`-derived tool param schemas)
 - **HTTP client**: `reqwest` — direct calls to any OpenAI-compatible image API proxy, no SDK wrapper
+- **Image decode/resize/encode**: [`image`](https://docs.rs/image) crate
+  (`png`, `jpeg`, `webp` features only — matches `Format`), used by
+  `image_info`/`image_resize`; not used by `create`/`edit`, which only
+  base64-encode/decode opaque bytes
 - **Transport**: stdio
 - **Logging**: `tracing` to stderr (stdout is reserved for JSON-RPC on
   stdio transport — never log there)
@@ -127,14 +177,17 @@ image-mcp/
 ├── src/
 │   ├── main.rs          # entrypoint: load config, init tracing, serve stdio
 │   ├── config.rs        # JSONC config loading + structs
-│   ├── server.rs        # ImageMcpServer: rmcp tool_router wiring for create/edit/list_models
+│   ├── server.rs        # ImageMcpServer: rmcp tool_router wiring for create/edit/list_models/image_info/image_resize
 │   ├── image_api.rs        # reqwest client: generate() [JSON], edit() [multipart], shared b64_json response parsing
+│   ├── image_ops.rs        # image crate wrapper: detect_format(), inspect(), resize() — used by image_info/image_resize
 │   ├── tools/
-│   │   ├── mod.rs        # ImageParams/ResolvedParams, validation, shared respond_with_images
+│   │   ├── mod.rs        # ImageParams/ResolvedParams, validation, shared respond_with_images/read_input_image/parse_size
 │   │   ├── create.rs     # `create` tool impl
 │   │   ├── edit.rs       # `edit` tool impl
+│   │   ├── image_info.rs # `image_info` tool impl
+│   │   ├── image_resize.rs # `image_resize` tool impl
 │   │   └── list_models.rs
-│   └── image_store.rs    # writes decoded images to the exact `output_path`, returns path
+│   └── image_store.rs    # writes decoded/raw images to the exact output path, returns path
 ```
 
 ## Release flow
@@ -158,16 +211,19 @@ image-mcp/
 ## Security posture
 
 `input_path` and `output_path` accept arbitrary filesystem paths — no
-allow-listed root directory, no chroot, no sandbox. Symlinks are rejected
-and `..` traversal is blocked, but an absolute path anywhere on the
+allow-listed root directory, no chroot, no sandbox — across all five
+tools. Symlinks are rejected and `..` traversal is blocked (shared logic
+in `tools::read_input_image`), but an absolute path anywhere on the
 filesystem (or relative to the working directory) is accepted. This
 means:
 
 * A compromised or untrusted calling LLM can read any file readable by the
-  process and exfiltrate it to the configured upstream image API via
-  `input_path`.
+  process via `input_path`. For `edit`, that data is sent to the
+  configured upstream image API; `image_info` and `image_resize` never
+  call the upstream API, but still read (and, for `image_resize`,
+  re-encode and write back out) arbitrary readable files.
 * A compromised or untrusted calling LLM can overwrite any file writable
-  by the process via `output_path`.
+  by the process via `output_path` (`create`, `edit`, `image_resize`).
 
 This is an **accepted risk**. The threat model assumes the calling LLM is
 either trusted or already controls the MCP host — it does not assume a

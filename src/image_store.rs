@@ -34,7 +34,7 @@ pub fn save_image(b64_data: &str, format: Format, file: &Path) -> Result<PathBuf
 /// Writes already-decoded image bytes to the exact path `file`, creating
 /// its parent directory if needed. If `file` has no extension, the
 /// `format`'s extension is appended.
-fn write_image_to_file(
+pub fn write_image_to_file(
     bytes: &[u8],
     file: &Path,
     format: Format,
