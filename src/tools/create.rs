@@ -141,13 +141,17 @@ mod tests {
 
     #[tokio::test]
     async fn successful_create_writes_to_output_path() {
+        use image::ImageFormat;
+        use std::io::Cursor;
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let mock_server = MockServer::start().await;
-        let mut png_bytes = b"\x89PNG\r\n\x1a\n".to_vec();
-        png_bytes.extend_from_slice(b"rest-of-file");
-        let png_b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+        let mut png_buf = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(64, 64)
+            .write_to(&mut png_buf, ImageFormat::Png)
+            .unwrap();
+        let png_b64 = base64::engine::general_purpose::STANDARD.encode(png_buf.into_inner());
 
         Mock::given(method("POST"))
             .and(path("/v1/images/generations"))
@@ -169,11 +173,17 @@ mod tests {
         let result = run(&config, &client, params).await;
         assert_eq!(result.is_error, Some(false));
         assert_eq!(result.content.len(), 1);
-        let path = match &result.content[0] {
+        let text = match &result.content[0] {
             ContentBlock::Text(t) => t.text.clone(),
             _ => panic!("expected text block"),
         };
-        assert_eq!(std::path::PathBuf::from(&path), target);
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            std::path::PathBuf::from(parsed["path"].as_str().unwrap()),
+            target
+        );
+        assert!(parsed["width"].is_u64());
+        assert!(parsed["height"].is_u64());
         std::fs::remove_dir_all(&dir).ok();
     }
 }

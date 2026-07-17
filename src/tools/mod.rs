@@ -163,12 +163,14 @@ fn is_path_traversal(path: &str) -> bool {
 
 /// Shared response handling for `create` and `edit`: writes each returned
 /// image to disk at `output_path` (or a `-<n>`-suffixed variant of it, for
-/// n>1) and returns the written filename(s) as text content.
+/// n>1) and returns the written file info (path, width, height) as a JSON
+/// text block per image.
 pub fn respond_with_images(
     images: Vec<String>,
     format: Format,
     output_path: &Path,
 ) -> CallToolResult {
+    use base64::Engine as _;
     let mut content = Vec::with_capacity(images.len());
     let total = images.len();
 
@@ -179,15 +181,40 @@ pub fn respond_with_images(
             output_path.to_path_buf()
         };
 
-        match image_store::save_image(&b64_data, format, &target) {
-            Ok(path) => content.push(ContentBlock::text(path.display().to_string())),
+        let json = match base64::engine::general_purpose::STANDARD.decode(&b64_data) {
+            Ok(bytes) => {
+                // Inspect dimensions from the bytes we already have in memory.
+                let info = match crate::image_ops::inspect(&bytes) {
+                    Ok(info) => info,
+                    Err(err) => {
+                        return CallToolResult::error(vec![ContentBlock::text(format!(
+                            "failed to inspect image dimensions: {err}"
+                        ))]);
+                    }
+                };
+                match image_store::save_image(&b64_data, format, &target) {
+                    Ok(path) => serde_json::json!({
+                        "path": path.display().to_string(),
+                        "width": info.width,
+                        "height": info.height,
+                    }),
+                    Err(err) => {
+                        tracing::error!("failed to save image to {}: {}", target.display(), err);
+                        return CallToolResult::error(vec![ContentBlock::text(format!(
+                            "failed to save image: {err}"
+                        ))]);
+                    }
+                }
+            }
             Err(err) => {
-                tracing::error!("failed to save image to {}: {}", target.display(), err);
+                tracing::error!("failed to decode image data: {err}");
                 return CallToolResult::error(vec![ContentBlock::text(format!(
                     "failed to save image: {err}"
                 ))]);
             }
-        }
+        };
+
+        content.push(ContentBlock::text(json.to_string()));
     }
 
     CallToolResult::success(content)
@@ -212,6 +239,8 @@ fn suffixed_path(path: &Path, index: usize) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::ImageFormat;
+    use std::io::Cursor;
 
     fn sample_defaults() -> ImageDefaults {
         ImageDefaults {
@@ -395,24 +424,31 @@ mod tests {
 
     fn valid_png_b64() -> String {
         use base64::Engine as _;
-        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
-        bytes.extend_from_slice(b"rest-of-file");
-        base64::engine::general_purpose::STANDARD.encode(&bytes)
+        // Generate a real 1x1 RGB PNG so that `save_image` and `inspect`
+        // both succeed.
+        let mut buf = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(1, 1)
+            .write_to(&mut buf, ImageFormat::Png)
+            .unwrap();
+        base64::engine::general_purpose::STANDARD.encode(buf.into_inner())
     }
 
     #[test]
-    fn respond_with_images_writes_and_returns_text_paths() {
+    fn respond_with_images_writes_and_returns_dimensions() {
         let dir = std::env::temp_dir().join(format!("image-mcp-test-{}", uuid::Uuid::new_v4()));
         let file = dir.join("out.png");
 
         let result = respond_with_images(vec![valid_png_b64()], Format::Png, &file);
         assert_eq!(result.is_error, Some(false));
         assert_eq!(result.content.len(), 1);
-        let path = match &result.content[0] {
+        let text = match &result.content[0] {
             ContentBlock::Text(t) => t.text.clone(),
             _ => panic!("expected text block"),
         };
-        assert_eq!(PathBuf::from(&path), file);
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed["path"].as_str().unwrap(), file.to_string_lossy());
+        assert!(parsed["width"].is_u64());
+        assert!(parsed["height"].is_u64());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -424,6 +460,11 @@ mod tests {
         let result =
             respond_with_images(vec!["not valid base64!!!".to_string()], Format::Png, &file);
         assert_eq!(result.is_error, Some(true));
+        let text = match &result.content[0] {
+            ContentBlock::Text(t) => t.text.clone(),
+            _ => panic!("expected text block"),
+        };
+        assert!(text.contains("failed to save image"));
     }
 
     #[test]
@@ -439,9 +480,13 @@ mod tests {
         let paths: Vec<PathBuf> = result
             .content
             .iter()
-            .map(|block| match block {
-                ContentBlock::Text(t) => PathBuf::from(&t.text),
-                _ => panic!("expected text block"),
+            .map(|block| {
+                let text = match block {
+                    ContentBlock::Text(t) => t.text.clone(),
+                    _ => panic!("expected text block"),
+                };
+                let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+                PathBuf::from(parsed["path"].as_str().unwrap())
             })
             .collect();
         assert_eq!(paths[0], dir.join("out-1.png"));

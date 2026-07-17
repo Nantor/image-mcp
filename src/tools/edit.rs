@@ -315,13 +315,17 @@ mod tests {
 
     #[tokio::test]
     async fn successful_edit_with_input_path_writes_output_file() {
+        use image::ImageFormat;
+        use std::io::Cursor;
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let mock_server = MockServer::start().await;
-        let mut out_bytes = b"\x89PNG\r\n\x1a\n".to_vec();
-        out_bytes.extend_from_slice(b"rest-of-file");
-        let out_b64 = base64::engine::general_purpose::STANDARD.encode(&out_bytes);
+        let mut out_buf = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(64, 64)
+            .write_to(&mut out_buf, ImageFormat::Png)
+            .unwrap();
+        let out_b64 = base64::engine::general_purpose::STANDARD.encode(out_buf.into_inner());
 
         Mock::given(method("POST"))
             .and(path("/v1/images/edits"))
@@ -351,11 +355,17 @@ mod tests {
 
         assert_eq!(result.is_error, Some(false));
         assert_eq!(result.content.len(), 1);
-        let path = match &result.content[0] {
+        let text = match &result.content[0] {
             ContentBlock::Text(t) => t.text.clone(),
             _ => panic!("expected text block"),
         };
-        assert_eq!(std::path::PathBuf::from(&path), target);
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            std::path::PathBuf::from(parsed["path"].as_str().unwrap()),
+            target
+        );
+        assert!(parsed["width"].is_u64());
+        assert!(parsed["height"].is_u64());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -402,12 +412,17 @@ mod tests {
 
     #[tokio::test]
     async fn successful_edit_with_multiple_input_paths_sends_all_images() {
+        use image::ImageFormat;
+        use std::io::Cursor;
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let mock_server = MockServer::start().await;
-        let resp_b64 =
-            base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n\x1a\nedited-png-data");
+        let mut buf = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(64, 64)
+            .write_to(&mut buf, ImageFormat::Png)
+            .unwrap();
+        let resp_b64 = base64::engine::general_purpose::STANDARD.encode(buf.into_inner());
 
         Mock::given(method("POST"))
             .and(path("/v1/images/edits"))
@@ -440,12 +455,15 @@ mod tests {
 
         assert_eq!(result.is_error, Some(false));
         assert_eq!(result.content.len(), 1);
-        let path = match &result.content[0] {
+        let text = match &result.content[0] {
             ContentBlock::Text(t) => t.text.clone(),
             _ => panic!("expected text block"),
         };
-        assert_eq!(std::path::PathBuf::from(&path), target);
-
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            std::path::PathBuf::from(parsed["path"].as_str().unwrap()),
+            target
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }
