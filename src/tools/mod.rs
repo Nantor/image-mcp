@@ -15,28 +15,31 @@ use crate::image_store;
 
 /// Params shared by the `create` and `edit` tools. Per-call values here
 /// override the matching config default; anything left `None` falls back
-/// to `create_defaults` / `edit_defaults` in the config.
+/// to config defaults.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ImageParams {
-    /// Text prompt describing the desired image (or the edit to apply).
+    /// [required] Text prompt describing the desired image or the edit to apply.
+    /// Must not be empty or whitespace-only.
     pub prompt: String,
-    /// Model to use. Falls back to the configured default for this mode.
+    /// [optional] Model name to use for generation. Falls back to the
+    /// config default for this mode.
     pub model: Option<String>,
-    /// Number of images to generate. Falls back to the configured default.
+    /// [optional] Number of images to generate (>= 1). Falls back to the
+    /// config default.
     pub n: Option<u32>,
-    /// Image size, e.g. "1024x1024". Falls back to the configured default.
+    /// [optional] Image size in WIDTHxHEIGHT format (e.g. "1024x1024").
+    /// Falls back to the config default. Supported dimensions vary by model.
     pub size: Option<String>,
-    /// Output image format. Falls back to the configured default.
+    /// [optional] Output format: png, jpg, or webp. Falls back to the
+    /// config default.
     pub format: Option<Format>,
-    /// Filesystem path(s) to input image(s), read from disk. Required for
-    /// `edit` (at least one entry); unused for `create`.
+    /// [required for `edit`; ignored by `create`] One or more paths to
+    /// existing image files for editing.
     pub input_path: Option<Vec<String>>,
-    /// Filesystem path to write the output image to. Required. If `n`
-    /// resolves to more than 1, each generated image is written next to
-    /// this path with a `-1`, `-2`, ... suffix inserted before the
-    /// extension (e.g. `out.png` becomes `out-1.png`, `out-2.png`, ...);
-    /// with exactly one image, this exact path is used as-is. The
-    /// resolved format's extension is appended if the path has none.
+    /// [required] Filename where output image(s) will be saved. Include
+    /// a recognized image extension (`.png`, `.jpg`, `.webp`). If `n > 1`
+    /// images are generated, `-1`, `-2`, etc. suffixes are inserted before
+    /// the extension (e.g. `out.png` → `out-1.png`, `out-2.png`).
     pub output_path: String,
 }
 

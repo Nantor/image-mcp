@@ -29,7 +29,9 @@ impl ImageMcpServer {
         }
     }
 
-    #[tool(description = "Generate an image from a text prompt (text-to-image).")]
+    #[tool(
+        description = "Generate an image from a text prompt. Required: `prompt` (describe what to generate), `output_path` (save path with image extension like .png). Optional: `model`, `n` (number of images), `size` (WIDTHxHEIGHT, e.g. \"1024x1024\"), `format` (png/jpg/webp). Falls back to config defaults."
+    )]
     async fn create(
         &self,
         Parameters(params): Parameters<ImageParams>,
@@ -38,7 +40,7 @@ impl ImageMcpServer {
     }
 
     #[tool(
-        description = "Edit one or more images using a natural-language prompt. Requires at least one input image, provided as an on-disk `input_path`; when multiple are given, the model can compose/reference all of them (e.g. combining a subject from one image with a background from another). There is no mask/inpainting support — describe the desired edit in `prompt`."
+        description = "Edit existing images using a text prompt. Required: `prompt` (describe the edit), `input_path` (path(s) to image file(s) to edit), `output_path` (save path with image extension). Optional: `model`, `n` (number of images), `size` (WIDTHxHEIGHT, e.g. \"1024x1024\"), `format` (png/jpg/webp). Falls back to config defaults. Accepts multiple input images. No mask/inpainting — describe the entire edit in the prompt."
     )]
     async fn edit(
         &self,
@@ -47,13 +49,15 @@ impl ImageMcpServer {
         Ok(edit::run(&self.config, &self.client, params).await)
     }
 
-    #[tool(description = "List the configured image-capable models.")]
+    #[tool(
+        description = "List available image generation models. Returns an `image_models` array of names. Use these names as the `model` parameter in create or edit calls. No params needed."
+    )]
     fn list_models(&self) -> Result<CallToolResult, McpError> {
         Ok(list_models::run(&self.config))
     }
 
     #[tool(
-        description = "Inspect an on-disk image file: reports its detected image type (png/jpg/webp), pixel dimensions (width/height), and file size in bytes. Read-only — never calls the upstream image API."
+        description = "Inspect an existing image file. Required: `input_path`. Returns format (png/jpg/webp), width, height, and file size in bytes."
     )]
     fn image_info(
         &self,
@@ -63,7 +67,7 @@ impl ImageMcpServer {
     }
 
     #[tool(
-        description = "Resize an on-disk image to an exact new WIDTHxHEIGHT size, stretching it if the aspect ratio differs (no cropping or letterboxing). Writes the result to `output_path`; defaults to the input image's own format unless `format` is given. Never calls the upstream image API."
+        description = "Resize an image to exact WIDTHxHEIGHT dimensions (stretches). Required: `input_path`, `size` (WIDTHxHEIGHT, e.g. \"1024x1024\"), `output_path` (save path). Optional: `format` (png/jpg/webp; defaults to input format)."
     )]
     fn image_resize(
         &self,
@@ -80,7 +84,14 @@ impl ServerHandler for ImageMcpServer {
             .with_server_info(Implementation::from_build_env())
             .with_protocol_version(ProtocolVersion::V_2024_11_05)
             .with_instructions(
-                "Image generation and editing backed by an OpenAI-compatible image API (or proxy). Tools: create (text-to-image), edit (prompt-driven image editing, no mask support), list_models (configured image models), image_info (inspect an image's type/dimensions/size), image_resize (resize an image to an exact size).".to_string(),
+                "Image generation and editing tools backed by an OpenAI-compatible image API (or proxy).\n\
+                Available tools:\n\
+                - create: Generate an image from text. Required: `prompt`, `output_path`.\n\
+                - edit: Edit images with a prompt. Required: `prompt`, `input_path`, `output_path`. No mask/inpainting.\n\
+                - list_models: Returns available model names. Use as `model` param in create/edit.\n\
+                - image_info: Inspect image file for format, dimensions, file size.\n\
+                - image_resize: Resize to exact WIDTHxHEIGHT (stretches). Required: `input_path`, `size`, `output_path`."
+                    .to_string(),
             )
     }
 }
