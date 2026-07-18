@@ -91,7 +91,7 @@ impl ServerHandler for ImageMcpServer {
                 - list_models: Returns available model names. Use as `model` param in create/edit.\n\
                 - image_info: Inspect image file for format, dimensions, file size.\n\
                 - image_resize: Resize to exact WIDTHxHEIGHT (stretches). Required: `input_path`, `size`, `output_path`."
-                    .to_string(),
+                .to_string(),
             )
     }
 }
