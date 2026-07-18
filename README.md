@@ -17,7 +17,9 @@ Most of these behaviors are enforced by tests in `src/`, which are referenced be
 - **Create** – Generate images from text prompts using the `/v1/images/generations` endpoint of the configured image API.
 - **Edit** – Edit existing images using natural language, via the `/v1/images/edits` endpoint.
 - **List Models** – Return the configured image models from your local config (no external image API call).
-- **Filesystem output** – Always writes generated images to a filesystem path you specify (`output_path`).
+- **Image Info** – Inspect an on-disk image file to report its detected image type (png/jpg/webp), pixel dimensions, and file size in bytes. Local-only; never calls the upstream image API.
+- **Image Resize** – Resize an on-disk image to an exact new `WIDTHxHEIGHT` size, stretching if the aspect ratio differs (no cropping or letterboxing). Local-only; never calls the upstream image API.
+- **Filesystem output** – Always writes generated or resized images to a filesystem path you specify (`output_path`).
 
 ## Installation
 
@@ -40,21 +42,21 @@ Example `config.json`:
   "image_api": {
     "base_url": "http://localhost:4000",
     "api_key": "sk-...",
-    "request_timeout_secs": 180
+    "request_timeout_secs": 180,
   },
   "image_models": ["gpt-image-1"],
   "create_defaults": {
     "model": "gpt-image-1",
     "n": 1,
     "size": "1024x1024",
-    "format": "png"
+    "format": "png",
   },
   "edit_defaults": {
     "model": "gpt-image-1",
     "n": 1,
     "size": "1024x1024",
-    "format": "png"
-  }
+    "format": "png",
+  },
 }
 ```
 
@@ -62,6 +64,7 @@ Notes:
 
 - The file must exist and be valid JSONC (comments allowed) on startup.
 - Missing or invalid config terminates the process at startup with a clear stderr error rather than a tool error.
+- `image_api.request_timeout_secs` is optional; if omitted, it falls back to a default of 180 seconds.
 - Defaults are not "magicked" in at runtime: `create_defaults` / `edit_defaults` must be complete and valid. This is tested in `config.rs` (see `validate_config_*` tests).
 
 The `config` module has tests that describe the exact rules:
@@ -73,9 +76,11 @@ The `config` module has tests that describe the exact rules:
 
 ## Tools & Parameters
 
-All tools are exposed via MCP (see `src/server.rs`). They share a common parameter shape defined by `ImageParams` in `src/tools/mod.rs`.
+The MCP-exposed tools are `create`, `edit`, `list_models`, `image_info`, and `image_resize` (see `src/server.rs`).
 
-Common fields:
+`create` and `edit` share a common parameter shape defined by `ImageParams` in `src/tools/mod.rs`.
+
+Common fields for `create` / `edit`:
 
 - `prompt` (string, required) – human-language description of the desired image or edit.
 - `model` (string, optional) – overrides the default model for the tool.
@@ -94,6 +99,16 @@ that the calling LLM is trusted. See `PLAN.md` for details.
 
 The `ImageParams::resolve` tests (`resolve_all_defaults`, `resolve_all_overrides`, `resolve_partial_override`) in `src/tools/mod.rs` document how these optional fields merge with the configured defaults.
 
+`image_info` and `image_resize` use their own parameter structs:
+
+- `image_info` – `ImageInfoParams` with:
+  - `input_path` (string, required) – filesystem path to the image file to inspect.
+- `image_resize` – `ImageResizeParams` with:
+  - `input_path` (string, required) – filesystem path to the input image file.
+  - `size` (string, required) – target dimensions like `"512x512"`; the image is stretched to exactly this size and the aspect ratio is not preserved. Each dimension must be between 1 and 8192 pixels.
+  - `format` (string, optional) – one of `"png"`, `"jpg"`, or `"webp"`; defaults to the input image's detected format if omitted.
+  - `output_path` (string, required) – filesystem path to write the resized image to.
+
 ### `create`: text-to-image
 
 Generates images from text using the `/v1/images/generations` endpoint of the configured image API.
@@ -109,7 +124,7 @@ Example MCP tool parameters:
 ```jsonc
 {
   "prompt": "a red bicycle parked under a street lamp at night",
-  "output_path": "/home/me/Pictures/bicycle.png"
+  "output_path": "/home/me/Pictures/bicycle.png",
 }
 ```
 
@@ -131,7 +146,7 @@ Example MCP tool parameters:
 {
   "prompt": "add a party hat and confetti",
   "input_path": ["/home/me/Pictures/photo.png"],
-  "output_path": "/home/me/Pictures/photo-with-party-hat.png"
+  "output_path": "/home/me/Pictures/photo-with-party-hat.png",
 }
 ```
 
@@ -176,12 +191,32 @@ The test suite documents the contract this server aims to provide. Some notable 
 - **Parameter validation** – `validate_*` tests in `src/tools/mod.rs` enforce non-empty `prompt`, `n >= 1`, valid `size` shape, and non-empty `output_path`.
 - **MCP surface** – tests in `src/server.rs` (`get_info_advertises_tools_and_instructions`, `create_tool_surfaces_validation_error`, `edit_tool_surfaces_missing_image_error`) ensure the advertised tools and their error behavior match what MCP clients see.
 - **HTTP behavior** – unit and integration tests in `src/image_api.rs` (`generate_returns_decoded_images_on_success`, error-path tests, and `normalize_base_url` / `sniff_image_type` tests) exercise the HTTP contract with the upstream image API.
+- **Local image tools** – tests in `src/tools/image_info.rs` and `src/tools/image_resize.rs` cover format/dimension reporting, resize bounds (including a maximum dimension of 8192), symlink and nonexistent-file handling, and extension behavior when `output_path` is missing an explicit extension.
 
 If you are unsure how a particular edge case behaves, searching for the corresponding test is a good starting point.
 
 ## Manual Tests
 
-The `docs/manual-tests/` directory contains ad-hoc test session documentation — markdown write-ups with generated PNG captures (Gemini and GPT model families, ~30 MB total across 19 PNGs). These are manual, non-automated records of exploratory sessions and are not run by CI.
+Manual image test sessions (with captured outputs) are documented under
+[`docs/manual-tests/`](docs/manual-tests/). See
+[`docs/manual-tests/README.md`](docs/manual-tests/README.md) for a short
+overview of the scenarios exercised and links to representative images.
+
+### Example Images
+
+Below are a few representative images generated during manual testing, covering
+a range of styles and content. Paths are relative to this repository. For more
+context and additional examples, see
+[`docs/manual-tests/README.md`](docs/manual-tests/README.md):
+
+| Cyberpunk Cityscape (digital art) | Zen Garden (watercolor) | Volcano Diagram (educational infographic) |
+| :---: | :---: | :---: |
+| ![cyberpunk-city](docs/images/cyberpunk-city.png) | ![zen-garden-watercolor](docs/images/zen-garden-watercolor.png) | ![volcano-diagram](docs/images/volcano-diagram.png) |
+
+| Merged — all three styles combined into one cohesive scene |
+| :---: |
+| ![merged-all-three](docs/images/merged-all-three.png) |
+
 
 ## Building & Testing
 
@@ -194,15 +229,18 @@ cargo fmt --all -- --check
 
 ## Architecture
 
-| File | Purpose |
-|------|---------|
-| `src/main.rs` | Initializes tracing, loads config, validates it, and serves MCP over stdio |
-| `src/server.rs` | Wiring hub for `create`, `edit`, and `list_models` tools, including MCP metadata/tests |
-| `src/tools/mod.rs` | Shared contract: `ImageParams`, config-default resolution, validation, and image response handling |
-| `src/tools/create.rs` | Implementation of the `create` tool, calling the upstream image API's `/v1/images/generations` endpoint and persisting images |
-| `src/tools/edit.rs` | Implementation of the `edit` tool, handling input images and calling the upstream image API's `/v1/images/edits` endpoint |
-| `src/tools/list_models.rs` | Implementation of `list_models`, returning configured models only |
-| `src/image_store.rs` | Base64 decoding, lightweight format checking, and filesystem writes for images |
-| `src/image_api.rs` | HTTP client for the upstream OpenAI-compatible image API: base URL normalization, request construction, and response parsing |
+| File                        | Purpose                                                                                                                       |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `src/main.rs`               | Initializes tracing, loads config, validates it, and serves MCP over stdio                                                    |
+| `src/server.rs`             | Wiring hub for `create`, `edit`, `list_models`, `image_info`, and `image_resize` tools, including MCP metadata/tests          |
+| `src/tools/mod.rs`          | Shared contract: `ImageParams`, config-default resolution, validation, and image response handling                            |
+| `src/tools/create.rs`       | Implementation of the `create` tool, calling the upstream image API's `/v1/images/generations` endpoint and persisting images |
+| `src/tools/edit.rs`         | Implementation of the `edit` tool, handling input images and calling the upstream image API's `/v1/images/edits` endpoint     |
+| `src/tools/list_models.rs`  | Implementation of `list_models`, returning configured models only                                                             |
+| `src/tools/image_info.rs`   | Implementation of the `image_info` tool, inspecting an on-disk image's format/dimensions/size                                 |
+| `src/tools/image_resize.rs` | Implementation of the `image_resize` tool, resizing on-disk images locally and writing the result to disk                     |
+| `src/image_ops.rs`          | Local image operations (format detection, inspection, resize) used by `image_info` and `image_resize`                         |
+| `src/image_store.rs`        | Base64 decoding, lightweight format checking, and filesystem writes for images                                                |
+| `src/image_api.rs`          | HTTP client for the upstream OpenAI-compatible image API: base URL normalization, request construction, and response parsing  |
 
 See `PLAN.md` for the complete design spec.
