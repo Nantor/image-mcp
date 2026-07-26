@@ -14,12 +14,15 @@ backed by an OpenAI-compatible image API (or proxy).
 - **image_resize** — resizes an on-disk image to an exact new
   WIDTHxHEIGHT, stretching to fit (no cropping/letterboxing); local-only,
   no upstream image API call
+- **image_crop** — cuts out a rectangular box (`x`, `y`, `width`,
+  `height`) from an on-disk image; local-only, no upstream image API call
 
 Mask-based inpainting and image-to-image style transfer via reference
 image strength are explicitly **out of scope** — covered by
 natural-language instructions inside `prompt` for `edit`, or dropped as
-unsupported. Outpaint/crop are also out of scope. Resizing is handled
-locally by `image_resize` rather than via the upstream image API.
+unsupported. Outpaint is also out of scope. Resizing and cropping are
+handled locally by `image_resize`/`image_crop` rather than via the
+upstream image API.
 
 ## Tool schemas
 
@@ -53,9 +56,9 @@ struct ImageParams {
 - `list_models` takes no input, returns `image_models` straight from config
   (no external image API call).
 
-`image_info` and `image_resize` are local-only tools built on the `image`
-crate (decode/resize/encode for png/jpg/webp) — they never call the
-upstream image API:
+`image_info`, `image_resize`, and `image_crop` are local-only tools built
+on the `image` crate (decode/resize/crop/encode for png/jpg/webp) — they
+never call the upstream image API:
 
 ```rust
 struct ImageInfoParams {
@@ -67,6 +70,16 @@ struct ImageResizeParams {
     size: String,             // target WIDTHxHEIGHT, e.g. "512x512"
     format: Option<Format>,   // defaults to the input image's own detected format
     output_path: String,      // required filesystem path to write the resized image to
+}
+
+struct ImageCropParams {
+    input_path: String,      // on-disk input image path, read from disk
+    x: u32,                   // crop box top-left x, in pixels
+    y: u32,                   // crop box top-left y, in pixels
+    width: u32,                // crop box width, in pixels (>= 1)
+    height: u32,               // crop box height, in pixels (>= 1)
+    format: Option<Format>,   // defaults to the input image's own detected format
+    output_path: String,      // required filesystem path to write the cropped image to
 }
 ```
 
@@ -89,14 +102,26 @@ struct ImageResizeParams {
   a local, unbounded-by-default memory allocation and CPU-bound resample
   in the `image` crate; without a cap, an oversized target (e.g.
   `50000x50000`) is a local denial-of-service.
-- Both tools only support png/jpg/webp (the same three formats the
-  `image` crate is compiled with, matching `Format`); any other detected
-  format, or bytes that don't look like an image at all, is a tool error.
+- `image_crop` reads and validates `input_path` the same way, detects
+  its format, decodes it, and cuts out the rectangle at `(x, y)` sized
+  `width`x`height` via `crop_imm`, re-encodes to `format` (defaulting to
+  the input's own detected format), and writes the result to
+  `output_path` (extension appended if missing). Unlike `image::imageops
+  ::crop_imm`, which silently clamps an out-of-bounds box to fit, the
+  tool requires `x + width <= image_width` and `y + height <=
+  image_height` and returns a tool error if the box doesn't fit,
+  rather than silently returning a smaller-than-requested crop. `width`
+  and `height` must each be at least 1. Like `image_resize`, there is no
+  `n` and no numbered-suffix behavior.
+- All three local-only tools only support png/jpg/webp (the same three
+  formats the `image` crate is compiled with, matching `Format`); any
+  other detected format, or bytes that don't look like an image at all,
+  is a tool error.
 
 ## Response shape
 
-Both tools always write their output image(s) to disk and return the
-written filename(s) as `text` content blocks — there is no inline
+All of these tools always write their output image(s) to disk and return
+the written filename(s) as `text` content blocks — there is no inline
 base64 image content block.
 
 `output_path` is a required, exact destination file path: parent
@@ -153,10 +178,10 @@ Per-call params in a tool invocation override the matching config default.
   `server`, `macros`, `transport-io` (stdio), `schemars` (for
   `JsonSchema`-derived tool param schemas)
 - **HTTP client**: `reqwest` — direct calls to any OpenAI-compatible image API proxy, no SDK wrapper
-- **Image decode/resize/encode**: [`image`](https://docs.rs/image) crate
-  (`png`, `jpeg`, `webp` features only — matches `Format`), used by
-  `image_info`/`image_resize`; not used by `create`/`edit`, which only
-  base64-encode/decode opaque bytes
+- **Image decode/resize/crop/encode**: [`image`](https://docs.rs/image)
+  crate (`png`, `jpeg`, `webp` features only — matches `Format`), used by
+  `image_info`/`image_resize`/`image_crop`; not used by `create`/`edit`,
+  which only base64-encode/decode opaque bytes
 - **Transport**: stdio
 - **Logging**: `tracing` to stderr (stdout is reserved for JSON-RPC on
   stdio transport — never log there)
@@ -177,15 +202,16 @@ image-mcp/
 ├── src/
 │   ├── main.rs          # entrypoint: load config, init tracing, serve stdio
 │   ├── config.rs        # JSONC config loading + structs
-│   ├── server.rs        # ImageMcpServer: rmcp tool_router wiring for create/edit/list_models/image_info/image_resize
+│   ├── server.rs        # ImageMcpServer: rmcp tool_router wiring for create/edit/list_models/image_info/image_resize/image_crop
 │   ├── image_api.rs        # reqwest client: generate() [JSON], edit() [multipart], shared b64_json response parsing
-│   ├── image_ops.rs        # image crate wrapper: detect_format(), inspect(), resize() — used by image_info/image_resize
+│   ├── image_ops.rs        # image crate wrapper: detect_format(), inspect(), resize(), crop() — used by image_info/image_resize/image_crop
 │   ├── tools/
 │   │   ├── mod.rs        # ImageParams/ResolvedParams, validation, shared respond_with_images/read_input_image/parse_size
 │   │   ├── create.rs     # `create` tool impl
 │   │   ├── edit.rs       # `edit` tool impl
 │   │   ├── image_info.rs # `image_info` tool impl
 │   │   ├── image_resize.rs # `image_resize` tool impl
+│   │   ├── image_crop.rs # `image_crop` tool impl
 │   │   └── list_models.rs
 │   └── image_store.rs    # writes decoded/raw images to the exact output path, returns path
 ```
@@ -211,7 +237,7 @@ image-mcp/
 ## Security posture
 
 `input_path` and `output_path` accept arbitrary filesystem paths — no
-allow-listed root directory, no chroot, no sandbox — across all five
+allow-listed root directory, no chroot, no sandbox — across all six
 tools. Symlinks are rejected and `..` traversal is blocked (shared logic
 in `tools::read_input_image`), but an absolute path anywhere on the
 filesystem (or relative to the working directory) is accepted. This
@@ -219,11 +245,13 @@ means:
 
 * A compromised or untrusted calling LLM can read any file readable by the
   process via `input_path`. For `edit`, that data is sent to the
-  configured upstream image API; `image_info` and `image_resize` never
-  call the upstream API, but still read (and, for `image_resize`,
-  re-encode and write back out) arbitrary readable files.
+  configured upstream image API; `image_info`, `image_resize`, and
+  `image_crop` never call the upstream API, but still read (and, for
+  `image_resize`/`image_crop`, re-encode and write back out) arbitrary
+  readable files.
 * A compromised or untrusted calling LLM can overwrite any file writable
-  by the process via `output_path` (`create`, `edit`, `image_resize`).
+  by the process via `output_path` (`create`, `edit`, `image_resize`,
+  `image_crop`).
 
 This is an **accepted risk**. The threat model assumes the calling LLM is
 either trusted or already controls the MCP host — it does not assume a

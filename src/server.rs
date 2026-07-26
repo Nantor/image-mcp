@@ -7,9 +7,10 @@ use rmcp::{ErrorData as McpError, ServerHandler, tool, tool_handler, tool_router
 
 use crate::config::Config;
 use crate::image_api::ImageApiClient;
+use crate::tools::image_crop::ImageCropParams;
 use crate::tools::image_info::ImageInfoParams;
 use crate::tools::image_resize::ImageResizeParams;
-use crate::tools::{ImageParams, create, edit, image_info, image_resize, list_models};
+use crate::tools::{ImageParams, create, edit, image_crop, image_info, image_resize, list_models};
 
 #[derive(Clone)]
 pub struct ImageMcpServer {
@@ -75,6 +76,16 @@ impl ImageMcpServer {
     ) -> Result<CallToolResult, McpError> {
         Ok(image_resize::run(params))
     }
+
+    #[tool(
+        description = "Crop an image to a rectangular box. Required: `input_path`, `x`, `y` (top-left corner, in pixels), `width`, `height` (crop box size, in pixels), `output_path` (save path). Optional: `format` (png/jpg/webp; defaults to input format). The box (x+width, y+height) must fit within the source image's dimensions."
+    )]
+    fn image_crop(
+        &self,
+        Parameters(params): Parameters<ImageCropParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(image_crop::run(params))
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -90,7 +101,8 @@ impl ServerHandler for ImageMcpServer {
                 - edit: Edit images with a prompt. Required: `prompt`, `input_path`, `output_path`. No mask/inpainting.\n\
                 - list_models: Returns available model names. Use as `model` param in create/edit.\n\
                 - image_info: Inspect image file for format, dimensions, file size.\n\
-                - image_resize: Resize to exact WIDTHxHEIGHT (stretches). Required: `input_path`, `size`, `output_path`."
+                - image_resize: Resize to exact WIDTHxHEIGHT (stretches). Required: `input_path`, `size`, `output_path`.\n\
+                - image_crop: Crop to a box. Required: `input_path`, `x`, `y`, `width`, `height`, `output_path`."
                 .to_string(),
             )
     }

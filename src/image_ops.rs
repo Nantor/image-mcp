@@ -17,6 +17,17 @@ pub enum ImageOpsError {
     Decode(image::ImageError),
     #[error("failed to encode image: {0}")]
     Encode(image::ImageError),
+    #[error(
+        "crop box (x={x}, y={y}, width={width}, height={height}) falls outside the {image_width}x{image_height} source image"
+    )]
+    CropOutOfBounds {
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        image_width: u32,
+        image_height: u32,
+    },
 }
 
 pub struct ImageInfo {
@@ -83,6 +94,54 @@ pub fn resize(
 
     let mut buf = Cursor::new(Vec::new());
     resized
+        .write_to(&mut buf, to_image_format(output_format))
+        .map_err(ImageOpsError::Encode)?;
+    Ok(buf.into_inner())
+}
+
+/// Decodes `bytes` (already known to be `input_format`), cuts out the
+/// rectangle at `(x, y)` with size `width`x`height`, and re-encodes to
+/// `output_format`. Returns the encoded output bytes.
+///
+/// The crop box must fit entirely within the source image's dimensions —
+/// unlike `image::imageops::crop_imm`, which silently clamps an
+/// out-of-bounds box, this returns `ImageOpsError::CropOutOfBounds` so a
+/// caller-supplied box that doesn't fit the actual image surfaces as a
+/// clear error instead of silently returning a smaller-than-requested
+/// crop.
+pub fn crop(
+    bytes: &[u8],
+    input_format: Format,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    output_format: Format,
+) -> Result<Vec<u8>, ImageOpsError> {
+    let decoded = image::load_from_memory_with_format(bytes, to_image_format(input_format))
+        .map_err(ImageOpsError::Decode)?;
+    let (image_width, image_height) = (decoded.width(), decoded.height());
+
+    let fits = x
+        .checked_add(width)
+        .is_some_and(|right| right <= image_width)
+        && y.checked_add(height)
+            .is_some_and(|bottom| bottom <= image_height);
+    if !fits {
+        return Err(ImageOpsError::CropOutOfBounds {
+            x,
+            y,
+            width,
+            height,
+            image_width,
+            image_height,
+        });
+    }
+
+    let cropped = decoded.crop_imm(x, y, width, height);
+
+    let mut buf = Cursor::new(Vec::new());
+    cropped
         .write_to(&mut buf, to_image_format(output_format))
         .map_err(ImageOpsError::Encode)?;
     Ok(buf.into_inner())
@@ -182,6 +241,66 @@ mod tests {
         bytes.extend_from_slice(b"this is not a valid png body");
         assert!(matches!(
             resize(&bytes, Format::Png, 10, 10, Format::Png),
+            Err(ImageOpsError::Decode(_))
+        ));
+    }
+
+    #[test]
+    fn crop_cuts_out_exact_box() {
+        let bytes = encode(ImageFormat::Png, 20, 30);
+        let cropped = crop(&bytes, Format::Png, 5, 10, 8, 12, Format::Png).unwrap();
+        let info = inspect(&cropped).unwrap();
+        assert_eq!(info.width, 8);
+        assert_eq!(info.height, 12);
+        assert_eq!(info.format, Format::Png);
+    }
+
+    #[test]
+    fn crop_can_convert_format() {
+        let bytes = encode(ImageFormat::Png, 10, 10);
+        let cropped = crop(&bytes, Format::Png, 0, 0, 5, 5, Format::Jpg).unwrap();
+        let info = inspect(&cropped).unwrap();
+        assert_eq!(info.format, Format::Jpg);
+        assert_eq!(info.width, 5);
+        assert_eq!(info.height, 5);
+    }
+
+    #[test]
+    fn crop_box_spanning_full_image_succeeds() {
+        let bytes = encode(ImageFormat::Png, 10, 10);
+        let cropped = crop(&bytes, Format::Png, 0, 0, 10, 10, Format::Png).unwrap();
+        let info = inspect(&cropped).unwrap();
+        assert_eq!(info.width, 10);
+        assert_eq!(info.height, 10);
+    }
+
+    #[test]
+    fn crop_errors_when_box_extends_past_right_edge() {
+        let bytes = encode(ImageFormat::Png, 10, 10);
+        let err = crop(&bytes, Format::Png, 5, 0, 6, 5, Format::Png).unwrap_err();
+        assert!(matches!(err, ImageOpsError::CropOutOfBounds { .. }));
+    }
+
+    #[test]
+    fn crop_errors_when_box_extends_past_bottom_edge() {
+        let bytes = encode(ImageFormat::Png, 10, 10);
+        let err = crop(&bytes, Format::Png, 0, 5, 5, 6, Format::Png).unwrap_err();
+        assert!(matches!(err, ImageOpsError::CropOutOfBounds { .. }));
+    }
+
+    #[test]
+    fn crop_errors_when_origin_is_outside_image() {
+        let bytes = encode(ImageFormat::Png, 10, 10);
+        let err = crop(&bytes, Format::Png, 10, 10, 1, 1, Format::Png).unwrap_err();
+        assert!(matches!(err, ImageOpsError::CropOutOfBounds { .. }));
+    }
+
+    #[test]
+    fn crop_errors_on_corrupt_bytes() {
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend_from_slice(b"this is not a valid png body");
+        assert!(matches!(
+            crop(&bytes, Format::Png, 0, 0, 1, 1, Format::Png),
             Err(ImageOpsError::Decode(_))
         ));
     }

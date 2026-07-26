@@ -1,5 +1,6 @@
 pub mod create;
 pub mod edit;
+pub mod image_crop;
 pub mod image_info;
 pub mod image_resize;
 pub mod list_models;
@@ -113,10 +114,10 @@ pub fn parse_size(size: &str) -> Result<(u32, u32), String> {
 }
 
 /// Reads and validates a single on-disk image input path shared by the
-/// `edit`, `image_info`, and `image_resize` tools: rejects symlinks and
-/// `..` path traversal (paths may come from an untrusted caller), and
-/// errors if the file is missing, unreadable, or empty. Returns the raw
-/// file bytes on success.
+/// `edit`, `image_info`, `image_resize`, and `image_crop` tools: rejects
+/// symlinks and `..` path traversal (paths may come from an untrusted
+/// caller), and errors if the file is missing, unreadable, or empty.
+/// Returns the raw file bytes on success.
 pub fn read_input_image(path: &str) -> Result<Vec<u8>, String> {
     let p = Path::new(path);
     match p.symlink_metadata() {
