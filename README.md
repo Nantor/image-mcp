@@ -217,7 +217,6 @@ context and additional examples, see
 | :---: |
 | ![merged-all-three](docs/images/merged-all-three.png) |
 
-
 ## Building & Testing
 
 ```bash
